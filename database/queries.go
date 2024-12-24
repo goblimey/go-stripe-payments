@@ -452,15 +452,13 @@ func (db *Database) SetMemberEndDate(userID int, year int) error {
 			ON m.mem_usr_id=u.usr_id
 		LEFT JOIN adm_roles as r
 			ON r.rol_id = m.mem_rol_id
-			AND r.rol_name = 'Member'
-		WHERE u.usr_id = $1
+		WHERE r.rol_name = 'Member' 
+		AND u.usr_id = $1
 	`
 
-	var memberID int
-
-	// We should only get either no results or one result.
-	getMemberIDError := db.Connection.QueryRow(getMemberIDSQL, userID).
-		Scan(&memberID)
+	// If everything is working properly we should only get exactly
+	// one result, the ID of the user's member record with role Member.
+	rows, getMemberIDError := db.Connection.Query(getMemberIDSQL, userID)
 
 	if getMemberIDError != nil {
 		if getMemberIDError == sql.ErrNoRows {
@@ -478,53 +476,68 @@ func (db *Database) SetMemberEndDate(userID int, year int) error {
 	// in UTC.  It's safe to use this form for dates when we are
 	// in GMT, but not for dates during BST.  We are setting dates
 	// in the winter so we are OK.
+	//
+	// If we get more than one record (which shouldn't happen) set
+	// the end date in all of them
+	for {
+		if !rows.Next() {
+			break
+		}
+		var memberID int
+		err := rows.Scan(&memberID)
+		if err != nil {
+			return err
+		}
 
-	var result sql.Result
-	var setDateError error
+		fmt.Printf("setting mem_id %d", memberID)
 
-	if db.Type == "sqlite" {
+		var result sql.Result
+		var setDateError error
 
-		// Sqlite has no special date or timestamp format.  We store
-		// timestamps as strings in the format "YYYY-MM-DD HH:MM:SS.SSS".
-		dateStr := fmt.Sprintf("%04d-12-31 23:59:59.999", year)
+		if db.Type == "sqlite" {
 
-		const setYearEndSQLForSQLite = `
-		UPDATE adm_members
-		SET mem_end = ?
-	    WHERE mem_id =?`
+			// Sqlite has no special date or timestamp format.  We store
+			// timestamps as strings in the format "YYYY-MM-DD HH:MM:SS.SSS".
+			dateStr := fmt.Sprintf("%04d-12-31 23:59:59.999", year)
 
-		result, setDateError =
-			db.Connection.Exec(setYearEndSQLForSQLite, dateStr, memberID)
+			const setYearEndSQLForSQLite = `
+				UPDATE adm_members
+				SET mem_end = ?
+				WHERE mem_id =?`
 
-	} else {
+			result, setDateError =
+				db.Connection.Exec(setYearEndSQLForSQLite, dateStr, memberID)
 
-		// Postgres has a format for timestamps and converter functions
-		// to turn a timestamp into a string and vice versa.
-		endDate := fmt.Sprintf("%d-12-31 23:59:59 999999 +00", year)
-		const setYearEndSQLForPostgres = `
-			UPDATE adm_members
-			SET mem_end = to_timestamp($1, 'YYYY-MM-DD HH24:MI:SS US TZH')
-			WHERE mem_id =$2`
+		} else {
 
-		result, setDateError =
-			db.Connection.Exec(setYearEndSQLForPostgres, endDate, memberID)
-	}
+			// Postgres has a format for timestamps and converter functions
+			// to turn a timestamp into a string and vice versa.
+			endDate := fmt.Sprintf("%d-12-31 23:59:59 999999 +00", year)
+			const setYearEndSQLForPostgres = `
+				UPDATE adm_members
+				SET mem_end = to_timestamp($1, 'YYYY-MM-DD HH24:MI:SS US TZH')
+				WHERE mem_id =$2`
 
-	if setDateError != nil {
-		em := fmt.Sprintf("%s %v", funcName, setDateError)
-		return errors.New(em)
-	}
+			result, setDateError =
+				db.Connection.Exec(setYearEndSQLForPostgres, endDate, memberID)
+		}
 
-	rowsAffected, rowsAffectedError := result.RowsAffected()
-	if rowsAffectedError != nil {
-		em := fmt.Sprintf("%s %v", funcName, rowsAffectedError)
-		return errors.New(em)
-	}
+		if setDateError != nil {
+			em := fmt.Sprintf("%s %v", funcName, setDateError)
+			return errors.New(em)
+		}
 
-	if rowsAffected < 1 {
-		em := fmt.Sprintf("%s: no rows updated for userID %d",
-			funcName, userID)
-		return errors.New(em)
+		rowsAffected, rowsAffectedError := result.RowsAffected()
+		if rowsAffectedError != nil {
+			em := fmt.Sprintf("%s %v", funcName, rowsAffectedError)
+			return errors.New(em)
+		}
+
+		if rowsAffected < 1 {
+			em := fmt.Sprintf("%s: no rows updated for userID %d",
+				funcName, userID)
+			return errors.New(em)
+		}
 	}
 
 	// Success!
