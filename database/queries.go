@@ -27,16 +27,17 @@ type MembershipSale struct {
 	PaymentStatus            string  // "pending", "complete" or "cancelled"
 	PaymentID                string  // The transaction Id from the payment processor.
 	MembershipYear           int     // The membership year paid for.
-	FullMemberID             int     // The user ID of the member
-	FullMemberFee            float64 // The fee paid for full membership.
-	FullMemberIsFriend       bool    // True if the full member is a friend of the museum.
-	FullMemberFriendFee      float64 // The fee paid for the full member to be a friend.
+	OrdinaryMemberID         int     // The user ID of the member
+	OrdinaryMemberFee        float64 // The fee paid for ordinary membership.
+	OrdinaryMemberIsFriend   bool    // True if the ordinary member is a friend of the museum.
+	OrdinaryMemberFriendFee  float64 // The fee paid for the ordinary member to be a friend.
+	DonationToSociety        float64 // donation to the society.
+	DonationToMuseum         float64 // donation to the museum.
+	Giftaid                  bool    // True if the member consents to Giftaid.
 	AssociateMemberID        int     // The user ID of the associate member.
 	AssociateMemberFee       float64 // the fee paid for associate membership.
 	AssocMemberIsFriend      bool    // True if the associate member is a friend of the museum.
-	AssociateMemberFriendFee float64 // the fee paid for associate member to be a fiend.
-	DonationToSociety        float64
-	DonationToMuseum         float64
+	AssociateMemberFriendFee float64 // The fee paid for associate member to be a fiend.
 }
 
 // Create() creates a MembershipSale record in the database.
@@ -70,9 +71,11 @@ func (ms *MembershipSale) Create(db *Database) (int, error) {
 		ms_usr2_friend,
 		ms_usr2_friend_fee,
 		ms_donation,
-		ms_donation_museum
-	) Values(nextval('membership_sales_ms_id_seq'), 
-	 	$1, $2, '', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+		ms_donation_museum,
+		ms_giftaid
+	) Values(
+	 	nextval('membership_sales_ms_id_seq'), 
+	 	$1, $2, '', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 	)
 	RETURNING ms_id;
 	`
@@ -81,16 +84,17 @@ func (ms *MembershipSale) Create(db *Database) (int, error) {
 			ms.PaymentService,
 			ms.PaymentStatus,
 			ms.MembershipYear,
-			ms.FullMemberID,
-			ms.FullMemberFee,
-			ms.FullMemberIsFriend,
-			ms.FullMemberFriendFee,
+			ms.OrdinaryMemberID,
+			ms.OrdinaryMemberFee,
+			ms.OrdinaryMemberIsFriend,
+			ms.OrdinaryMemberFriendFee,
 			ms.AssociateMemberID,
 			ms.AssociateMemberFee,
 			ms.AssocMemberIsFriend,
 			ms.AssociateMemberFriendFee,
 			ms.DonationToSociety,
 			ms.DonationToMuseum,
+			ms.Giftaid,
 		).Scan(&id)
 	} else {
 		// createStatement is the template to create a record in MembershipSales
@@ -113,9 +117,10 @@ func (ms *MembershipSale) Create(db *Database) (int, error) {
 				ms_usr2_friend,
 				ms_usr2_friend_fee,
 				ms_donation,
-				ms_donation_museum
+				ms_donation_museum,
+				ms.Giftaid
 				) Values(nextval('membership_sales_ms_id_seq'), 
-					$1, $2, '', $3, $4, $5, $6, $7, NULL, 0.0, false, 0.0, $8, $9
+					$1, $2, '', $3, $4, $5, $6, $7, NULL, 0.0, false, 0.0, $8, $9, $10
 				)
 				RETURNING ms_id;
 			`
@@ -125,12 +130,13 @@ func (ms *MembershipSale) Create(db *Database) (int, error) {
 			ms.PaymentService,
 			ms.PaymentStatus,
 			ms.MembershipYear,
-			ms.FullMemberID,
-			ms.FullMemberFee,
-			ms.FullMemberIsFriend,
-			ms.FullMemberFriendFee,
+			ms.OrdinaryMemberID,
+			ms.OrdinaryMemberFee,
+			ms.OrdinaryMemberIsFriend,
+			ms.OrdinaryMemberFriendFee,
 			ms.DonationToSociety,
 			ms.DonationToMuseum,
+			ms.Giftaid,
 		).Scan(&id)
 
 	}
@@ -207,9 +213,9 @@ func (ms *MembershipSale) Delete(db *Database) error {
 
 // TotalPayment adds up the fees and returns the total.
 func (ms *MembershipSale) TotalPayment() float64 {
-	return ms.FullMemberFee +
+	return ms.OrdinaryMemberFee +
 		ms.AssociateMemberFee +
-		ms.FullMemberFriendFee +
+		ms.OrdinaryMemberFriendFee +
 		ms.AssociateMemberFriendFee +
 		ms.DonationToSociety +
 		ms.DonationToMuseum
@@ -232,7 +238,8 @@ func (db *Database) GetMembershipSale(id int) (*MembershipSale, error) {
 		ms_usr1_friend_fee,
 		ms_usr2_friend_fee,
 		ms_donation,
-		ms_donation_museum
+		ms_donation_museum,
+		ms_giftaid
 	FROM membership_sales
 	WHERE ms_id = $1;
 `
@@ -256,16 +263,17 @@ func (db *Database) GetMembershipSale(id int) (*MembershipSale, error) {
 		&ms.PaymentStatus,
 		&ms.PaymentID,
 		&ms.MembershipYear,
-		&ms.FullMemberID,
-		&ms.FullMemberIsFriend,
+		&ms.OrdinaryMemberID,
+		&ms.OrdinaryMemberIsFriend,
 		&ms.AssociateMemberID,
 		&ms.AssocMemberIsFriend,
-		&ms.FullMemberFee,
+		&ms.OrdinaryMemberFee,
 		&ms.AssociateMemberFee,
-		&ms.FullMemberFriendFee,
+		&ms.OrdinaryMemberFriendFee,
 		&ms.AssociateMemberFriendFee,
 		&ms.DonationToSociety,
 		&ms.DonationToMuseum,
+		&ms.Giftaid,
 	)
 	if err != nil {
 		return nil, err
@@ -489,8 +497,6 @@ func (db *Database) SetMemberEndDate(userID int, year int) error {
 			return err
 		}
 
-		fmt.Printf("setting mem_id %d", memberID)
-
 		var result sql.Result
 		var setDateError error
 
@@ -585,10 +591,42 @@ func (db *Database) SetDateLastPaid(userID int, d time.Time) error {
 	return db.SetTimeFieldInUserData(fieldID, userID, d)
 }
 
-// SetFriendTickBox sets the friend of the museum tick box for the user in
+// SetFriendField sets the friend of the museum field for the user in
 // adm_user_data.  Tick box fields are set to 0 or 1.
-func (db *Database) SetFriendTickBox(userID int, ticked bool) error {
+func (db *Database) SetFriendField(userID int, ticked bool) error {
 	fieldID, fieldError := db.getFriendID()
+	if fieldError != nil {
+		return fieldError
+	}
+
+	if ticked {
+		return db.SetUserDataIntField(fieldID, userID, 1)
+	} else {
+		return db.SetUserDataIntField(fieldID, userID, 0)
+	}
+
+}
+
+// SetGiftaidField sets the giftaid field for the user in
+// adm_user_data.  Tick box fields are set to 0 or 1.
+func (db *Database) SetGiftaidField(userID int, ticked bool) error {
+	fieldID, fieldError := db.getGiftaidID()
+	if fieldError != nil {
+		return fieldError
+	}
+
+	if ticked {
+		return db.SetUserDataIntField(fieldID, userID, 1)
+	} else {
+		return db.SetUserDataIntField(fieldID, userID, 0)
+	}
+
+}
+
+// SetAssocFriendField sets the friend of the museum field for the user
+// in adm_user_data.  Tick box fields are set to 0 or 1.
+func (db *Database) SetAssocFriendField(userID int, ticked bool) error {
+	fieldID, fieldError := db.getAssocFriendID()
 	if fieldError != nil {
 		return fieldError
 	}
@@ -936,6 +974,25 @@ func (db *Database) getFriendID() (int, error) {
 
 	// Set the global ID so that we don't have to look up again.
 	db.friendID = fieldID
+
+	return fieldID, nil
+}
+
+// getGiftaidID gets the ID of the giftaid field in adm_user_fields.
+func (db *Database) getGiftaidID() (int, error) {
+	const fieldName = "GIFT_AID"
+	if db.giftaidID != 0 {
+		return db.giftaidID, nil
+	}
+
+	// This is the first call so we need to look up the ID.
+	fieldID, fetchError := db.getFieldID(fieldName)
+	if fetchError != nil {
+		return 0, errors.New("getGiftaidID: " + fetchError.Error())
+	}
+
+	// Set the global ID so that we don't have to look up again.
+	db.giftaidID = fieldID
 
 	return fieldID, nil
 }

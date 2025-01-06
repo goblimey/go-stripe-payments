@@ -25,8 +25,8 @@ func init() {
 		Parse(paymentPageTemplateStr))
 }
 
-// paymentFormData holds the submitted form data for validation and display.
-type paymentFormData struct {
+// PaymentFormData holds the submitted form data for validation and display.
+type PaymentFormData struct {
 
 	// Valid is set false during validation if the form data is invalid.
 	Valid bool
@@ -42,21 +42,24 @@ type paymentFormData struct {
 	LastName             string
 	Email                string
 	FriendStr            string // tickbox - "on", "off", "checked" or "unchecked"
+	DonationToSocietyStr string // number
+	DonationToMuseumStr  string // number
+	GiftaidStr           string // tickbox - "on", "off", "checked" or "unchecked"
 	AssocFirstName       string
 	AssocLastName        string
 	AssocEmail           string
 	AssocFriendStr       string // tickbox - "on", "off", "checked" or "unchecked"
-	DonationToSocietyStr string // number
-	DonationToMuseumStr  string // number
 
 	//  Values set during validation.
-	Friend             bool    // True if the tickbox is valid and true.
-	AssocFriend        bool    // True if the tickbox is valid and true.
+	Friend            bool    // True if the ordinary member's Friend tickbox is valid and true.
+	DonationToSociety float64 // Set during validation
+	DonationToMuseum  float64 // Set during validation
+	Giftaid           bool    // True if the giftaid tickbox is valid and true.
+	AssocFriend       bool    // True if the associate member's friend tickbox is valid and true.
+
 	OrdinaryMemberFee  float64 // The ordinary member fee converted to float.
 	AssociateMemberFee float64 // The associate member fee converted to float.
 	FriendFee          float64 // The friend fee converted to float.
-	DonationToSociety  float64 // Set during validation
-	DonationToMuseum   float64 // Set during validation
 
 	UserID      int // The ID of the ordinary member in the database (> zero).
 	AssocUserID int // The ID of the associate member in the database (zero if no associate).
@@ -66,15 +69,15 @@ type paymentFormData struct {
 	FirstNameErrorMessage         string
 	LastNameErrorMessage          string
 	EmailErrorMessage             string
-	AssocFirstNameErrorMessage    string
-	AssocLastNameErrorMessage     string
 	DonationToSocietyErrorMessage string
 	DonationToMuseumErrorMessage  string
+	AssocFirstNameErrorMessage    string
+	AssocLastNameErrorMessage     string
 }
 
 // NewPaymentForm finds the membership year we are currently selling
 // and creates a payment form.
-func NewPaymentForm(ordinaryMembershipFeeStr, associateMembershipFeeStr, friendMembershipFeeStr string) *paymentFormData {
+func NewPaymentForm(ordinaryMembershipFeeStr, associateMembershipFeeStr, friendMembershipFeeStr string) *PaymentFormData {
 	paymentYear := database.GetPaymentYear(time.Now())
 	f := createPaymentForm(
 		paymentYear,
@@ -90,9 +93,9 @@ func NewPaymentForm(ordinaryMembershipFeeStr, associateMembershipFeeStr, friendM
 // and the given payment year.  Factored out to support unit testing.
 func createPaymentForm(
 	paymentYear int,
-	ordinaryMembershipFeeStr, associateMembershipFeeStr, friendMembershipFeeStr string) *paymentFormData {
+	ordinaryMembershipFeeStr, associateMembershipFeeStr, friendMembershipFeeStr string) *PaymentFormData {
 
-	f := paymentFormData{
+	f := PaymentFormData{
 		PaymentYear:           paymentYear,
 		OrdinaryMemberFeeStr:  ordinaryMembershipFeeStr,
 		AssociateMemberFeeStr: associateMembershipFeeStr,
@@ -105,7 +108,7 @@ func createPaymentForm(
 // MarkMandatoryFields marks the mandatory parameters in a
 // payment form by setting error messages containing asterisks.
 // This drives the first view of the payment page.
-func (f *paymentFormData) MarkMandatoryFields() {
+func (f *PaymentFormData) MarkMandatoryFields() {
 	f.FirstNameErrorMessage = "*"
 	f.LastNameErrorMessage = "*"
 	f.EmailErrorMessage = "*"
@@ -226,18 +229,20 @@ func (hdlr *Handler) GetPaymentData(w http.ResponseWriter, r *http.Request) {
 
 // GetPaymentDataHelper validates the form and prepares the response.
 // It's separated out to support unit testing.
-func (hdlr *Handler) paymentDataHelper(w http.ResponseWriter, r *http.Request, form *paymentFormData, db *database.Database) {
+func (hdlr *Handler) paymentDataHelper(w http.ResponseWriter, r *http.Request, form *PaymentFormData, db *database.Database) {
 
 	form.FirstName = r.PostFormValue("first_name")
 	form.LastName = r.PostFormValue("last_name")
 	form.Email = r.PostFormValue("email")
 	form.FriendStr = r.PostFormValue("friend")
+	form.DonationToSocietyStr = r.PostFormValue("donation_to_society")
+	form.DonationToMuseumStr = r.PostFormValue("donation_to_museum")
+	form.GiftaidStr = r.PostFormValue("giftaid")
+
 	form.AssocFirstName = r.PostFormValue("assoc_first_name")
 	form.AssocLastName = r.PostFormValue("assoc_last_name")
 	form.AssocEmail = r.PostFormValue("assoc_email")
 	form.AssocFriendStr = r.PostFormValue("assoc_friend")
-	form.DonationToSocietyStr = r.PostFormValue("donation_to_society")
-	form.DonationToMuseumStr = r.PostFormValue("donation_to_museum")
 
 	// Validate the form data.  On the first call the form is empty.
 	// The validator sets error messages containing asterisks against
@@ -261,24 +266,31 @@ func (hdlr *Handler) paymentDataHelper(w http.ResponseWriter, r *http.Request, f
 
 	ms := database.MembershipSale{
 		MembershipYear:    form.PaymentYear,
-		FullMemberID:      form.UserID,            // Always present.
+		OrdinaryMemberID:  form.UserID,            // Always present.
 		AssociateMemberID: form.AssocUserID,       // 0 if no associated member.
-		FullMemberFee:     form.OrdinaryMemberFee, // Always present.
+		OrdinaryMemberFee: form.OrdinaryMemberFee, // Always present.
 		DonationToSociety: form.DonationToSociety, // 0.0 if no donation given.
 		DonationToMuseum:  form.DonationToMuseum,  // 0.0 if no donation given.
 		// The tick boxes are dealt with below.
 	}
 	// Create a list of hidden variables to drive the next request.
 	hiddenVars := `
-			<input type='hidden' name='user_id' value='{{.FullMemberID}}'>
+			<input type='hidden' name='user_id' value='{{.OrdinaryMemberID}}'>
 `
 
 	if form.Friend {
-		// The full-price member wants to be a friend of the museum.
-		ms.FullMemberIsFriend = true
-		ms.FullMemberFriendFee = form.FriendFee
+		// The ordinary member wants to be a friend of the museum.
+		ms.OrdinaryMemberIsFriend = true
 		hiddenVars += `
-			<input type='hidden' name='friend' value='on'>
+	<input type='hidden' name='friend' value='on'>
+`
+	}
+
+	if form.Giftaid {
+		// The ordinary member consents to Giftaid.
+		ms.Giftaid = true
+		hiddenVars += `
+		<input type='hidden' name='giftaid' value='on'>
 `
 	}
 
@@ -440,14 +452,14 @@ func (hdlr *Handler) successHelper(salesIDstr, sessionID string, w http.Response
 	// member is in the sales record.
 
 	// Set the end date of the full member.
-	fmError := db.SetMemberEndDate(ms.FullMemberID, ms.MembershipYear)
+	fmError := db.SetMemberEndDate(ms.OrdinaryMemberID, ms.MembershipYear)
 	if fmError != nil {
 		fmt.Println("successHelper: ", fmError.Error())
 		reportError(w, fmError)
 	}
 
 	now := time.Now()
-	dlpError := db.SetDateLastPaid(ms.FullMemberID, now)
+	dlpError := db.SetDateLastPaid(ms.OrdinaryMemberID, now)
 	if dlpError != nil {
 		fmt.Println("successHelper: ", dlpError.Error())
 		reportError(w, dlpError)
@@ -456,25 +468,32 @@ func (hdlr *Handler) successHelper(salesIDstr, sessionID string, w http.Response
 	membersAtAddress := 1
 	var friendsAtAddress int
 
-	if ms.FullMemberIsFriend {
+	if ms.OrdinaryMemberIsFriend {
 		friendsAtAddress++
 	}
 
-	// If the member is a friend, tick the box.  If they were a friend
-	// last year and is not this year, ensure that the box gets unticked.
-	err := db.SetFriendTickBox(ms.FullMemberID, ms.FullMemberIsFriend)
-	if err != nil {
-		fmt.Println("successHelper: friend ", err.Error())
-		reportError(w, err)
+	// If the member is a friend, tick the box.  In case it's
+	// already set from last year but not this year, ensure that the
+	// value in the DB record is reset.
+	friendError := db.SetFriendField(ms.OrdinaryMemberID, ms.OrdinaryMemberIsFriend)
+	if friendError != nil {
+		fmt.Println("successHelper: friend ", friendError.Error())
+		reportError(w, friendError)
+	}
+
+	// If the member consents to giftaid, tick the box.  In case it's
+	// already set from last year but not this year, ensure that the
+	// value in the DB record is reset.
+	giftaidError := db.SetGiftaidField(ms.OrdinaryMemberID, ms.Giftaid)
+	if giftaidError != nil {
+		fmt.Println("successHelper: friend ", giftaidError.Error())
+		reportError(w, giftaidError)
 	}
 
 	if ms.AssociateMemberID > 0 {
 
-		membersAtAddress++
-		if ms.AssocMemberIsFriend {
-			friendsAtAddress++
-		}
-		err := db.SetFriendTickBox(ms.AssociateMemberID, ms.AssocMemberIsFriend)
+		// Set the Friend field for the associate.
+		err := db.SetFriendField(ms.AssociateMemberID, ms.AssocMemberIsFriend)
 		if err != nil {
 			fmt.Println("successHelper: associate friend", err.Error())
 			reportError(w, err)
@@ -485,6 +504,11 @@ func (hdlr *Handler) successHelper(salesIDstr, sessionID string, w http.Response
 		if setError != nil {
 			fmt.Println("successHelper: ", setError.Error())
 			reportError(w, setError)
+		}
+
+		membersAtAddress++
+		if ms.AssocMemberIsFriend {
+			friendsAtAddress++
 		}
 
 		setMembersError := db.SetMembersAtAddress(ms.AssociateMemberID, membersAtAddress)
@@ -500,47 +524,47 @@ func (hdlr *Handler) successHelper(salesIDstr, sessionID string, w http.Response
 		}
 	}
 
-	setMembersError := db.SetMembersAtAddress(ms.FullMemberID, membersAtAddress)
+	setMembersError := db.SetMembersAtAddress(ms.OrdinaryMemberID, membersAtAddress)
 	if setMembersError != nil {
 		fmt.Println("successHelper: members ", setMembersError.Error())
 		reportError(w, setMembersError)
 	}
 
-	setFriendsError := db.SetFriendsAtAddress(ms.FullMemberID, friendsAtAddress)
+	setFriendsError := db.SetFriendsAtAddress(ms.OrdinaryMemberID, friendsAtAddress)
 	if setFriendsError != nil {
 		fmt.Println("successHelper: friends ", setFriendsError.Error())
 		reportError(w, setFriendsError)
 	}
 
 	// Update the last payment.
-	paymentError := db.SetLastPayment(ms.FullMemberID, ms.TotalPayment())
+	paymentError := db.SetLastPayment(ms.OrdinaryMemberID, ms.TotalPayment())
 	if paymentError != nil {
 		fmt.Printf("successHelper: error setting last payment for %d - %v",
-			ms.FullMemberID, paymentError)
+			ms.OrdinaryMemberID, paymentError)
 		reportError(w, fmError)
 	}
 
 	// Update the user's donation to society.
-	dsError := db.SetDonationToSociety(ms.FullMemberID, ms.DonationToSociety)
+	dsError := db.SetDonationToSociety(ms.OrdinaryMemberID, ms.DonationToSociety)
 	if dsError != nil {
 		fmt.Printf("successHelper: error setting donation to society for %d - %v",
-			ms.FullMemberID, dsError)
+			ms.OrdinaryMemberID, dsError)
 		reportError(w, fmError)
 	}
 
 	// Update the user's donation to museum.
-	dmError := db.SetDonationToMuseum(ms.FullMemberID, ms.DonationToMuseum)
+	dmError := db.SetDonationToMuseum(ms.OrdinaryMemberID, ms.DonationToMuseum)
 	if dmError != nil {
 		fmt.Printf("successHelper: error setting donation to museum for %d - %v",
-			ms.FullMemberID, dmError)
+			ms.OrdinaryMemberID, dmError)
 		reportError(w, fmError)
 	}
 
 	// Update the full member's friend tick box.
-	friendError := db.SetFriendTickBox(ms.FullMemberID, ms.FullMemberIsFriend)
+	friendError := db.SetFriendTickBox(ms.OrdinaryMemberID, ms.OrdinaryMemberIsFriend)
 	if friendError != nil {
 		fmt.Printf("successHelper: error setting friend value for %d - %v",
-			ms.FullMemberID, friendError)
+			ms.OrdinaryMemberID, friendError)
 		reportError(w, fmError)
 	}
 
@@ -587,7 +611,7 @@ func (hdlr *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (hdlr *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
-	form := paymentFormData{}
+	form := PaymentFormData{}
 	userIDParam := r.PostFormValue("user_id")
 	assocUserIDParam := r.PostFormValue("assoc_user_id")
 	form.FriendStr = r.PostFormValue("friend")
@@ -662,10 +686,10 @@ func (hdlr *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 		PaymentService:           "Stripe",
 		PaymentStatus:            "Pending",
 		MembershipYear:           database.GetPaymentYear(now),
-		FullMemberID:             userID,
-		FullMemberFee:            hdlr.OrdinaryMembershipFee,
-		FullMemberIsFriend:       friend,
-		FullMemberFriendFee:      friendFee,
+		OrdinaryMemberID:         userID,
+		OrdinaryMemberFee:        hdlr.OrdinaryMembershipFee,
+		OrdinaryMemberIsFriend:   friend,
+		OrdinaryMemberFriendFee:  friendFee,
 		AssociateMemberID:        assocUserID,
 		AssocMemberIsFriend:      assocFriend,
 		AssociateMemberFee:       assocFee,
@@ -748,7 +772,7 @@ func (hdlr *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 }
 
 // DisplayPaymentForm displays the given payment form
-func displayPaymentForm(w io.Writer, form *paymentFormData) {
+func displayPaymentForm(w io.Writer, form *PaymentFormData) {
 
 	executeError := paymentPageTemplate.Execute(w, form)
 
@@ -772,9 +796,9 @@ func (hdlr *Handler) displayInitialPaymentForm(w io.Writer) {
 
 // createPaymentForm sets the payment form with the reference data
 // and the given payment year.  Factored out to support unit testing.
-func (h *Handler) createPaymentFormData(paymentYear int) *paymentFormData {
+func (h *Handler) createPaymentFormData(paymentYear int) *PaymentFormData {
 
-	f := paymentFormData{
+	f := PaymentFormData{
 		PaymentYear:          paymentYear,
 		OrdinaryMemberFeeStr: h.OrdinaryMembershipFeeStr,
 		AssociateMemberFee:   h.AssociateMembershipFee,
@@ -791,16 +815,16 @@ func (hdlr *Handler) createCostBreakdown(ms *database.MembershipSale) string {
 	table := `
 <table>
 	<tr>
-	    <td style="border: 0">ordinary membership</td>
-		<td style="border: 0">£{{.FullMemberFee}}</td>
+	    <td style='border: 0'>ordinary membership</td>
+		<td style='border: 0'>£{{.OrdinaryMemberFee}}</td>
 	</tr>
 `
 
-	if ms.FullMemberIsFriend {
+	if ms.OrdinaryMemberIsFriend {
 		table += `
 	<tr>
-	    <td style="border: 0">friend of the museum</td>
-		<td style="border: 0">£{{.FullMemberFriendFee}}</td>
+	    <td style='border: 0'>friend of the museum</td>
+		<td style='border: 0'>£{{.OrdinaryMemberFriendFee}}</td>
 	</tr>
 `
 	}
@@ -808,8 +832,8 @@ func (hdlr *Handler) createCostBreakdown(ms *database.MembershipSale) string {
 	if ms.AssociateMemberID > 0 {
 		table += `
 	<tr>
-	    <td style="border: 0">associate member</td>
-		<td style="border: 0">£{{.AssociateMemberFee}}</td>
+	    <td style='border: 0'>associate member</td>
+		<td style='border: 0'>£{{.AssociateMemberFee}}</td>
 	</tr>		
 `
 	}
@@ -817,8 +841,8 @@ func (hdlr *Handler) createCostBreakdown(ms *database.MembershipSale) string {
 	if ms.AssocMemberIsFriend {
 		table += `
 	<tr>
-	    <td style="border: 0">associate is friend of the museum</td>
-		<td style="border: 0">£{{.AssociateMemberFriendFee}}</td>
+	    <td style='border: 0'>associate is friend of the museum</td>
+		<td style='border: 0'>£{{.AssociateMemberFriendFee}}</td>
 	</tr>
 `
 	}
@@ -826,8 +850,8 @@ func (hdlr *Handler) createCostBreakdown(ms *database.MembershipSale) string {
 	if ms.DonationToSociety > 0 {
 		table += `
 	<tr>
-	    <td style="border: 0">donation to the society</td>
-		<td style="border: 0">£{{.DonationToSociety}}</td>
+	    <td style='border: 0'>donation to the society</td>
+		<td style='border: 0'>£{{.DonationToSociety}}</td>
 	</tr>		
 `
 	}
@@ -835,16 +859,16 @@ func (hdlr *Handler) createCostBreakdown(ms *database.MembershipSale) string {
 	if ms.DonationToMuseum > 0 {
 		table += `
 	<tr>
-	    <td style="border: 0">donation to the museum</td>
-		<td style="border: 0">£{{.DonationToMuseum}}</td>
+	    <td style='border: 0'>donation to the museum</td>
+		<td style='border: 0'>£{{.DonationToMuseum}}</td>
 	</tr>
 	`
 	}
 
 	totalTemplate := `
 	<tr>
-	    <td style="border: 0"><b>Total</b></td>
-		<td style="border: 0">£%.2f</td>
+	    <td style='border: 0'><b>Total</b></td>
+		<td style='border: 0'>£%.2f</td>
 	</tr>
 `
 
@@ -868,7 +892,7 @@ const noSuchMember = "cannot find this member"
 // and all empty strings if the form is valid, false and the error messages set
 // if it's invalid.  It doesn't check that the user(s) exist - that requires a
 // database connection.  It's called by the validation .
-func simpleValidate(form *paymentFormData) bool {
+func simpleValidate(form *PaymentFormData) bool {
 
 	// Set the fees in the form.
 	form.OrdinaryMemberFee, form.AssociateMemberFee, form.FriendFee =
@@ -886,7 +910,8 @@ func simpleValidate(form *paymentFormData) bool {
 		len(form.AssocEmail) == 0 &&
 		len(form.AssocFriendStr) == 0 &&
 		len(form.DonationToSocietyStr) == 0 &&
-		len(form.DonationToMuseumStr) == 0 {
+		len(form.DonationToMuseumStr) == 0 &&
+		len(form.GiftaidStr) == 0 {
 
 		// On the first call the form is empty.  Mark the mandatory fields.
 		// Return false and the handler will display the form
@@ -900,12 +925,14 @@ func simpleValidate(form *paymentFormData) bool {
 	form.LastName = strings.TrimSpace(form.LastName)
 	form.Email = strings.TrimSpace(form.Email)
 	form.FriendStr = strings.TrimSpace(form.FriendStr)
+	form.DonationToSocietyStr = strings.TrimSpace(form.DonationToSocietyStr)
+	form.DonationToMuseumStr = strings.TrimSpace(form.DonationToMuseumStr)
+	form.GiftaidStr = strings.TrimSpace(form.GiftaidStr)
+
 	form.AssocFirstName = strings.TrimSpace(form.AssocFirstName)
 	form.AssocLastName = strings.TrimSpace(form.AssocLastName)
 	form.AssocEmail = strings.TrimSpace(form.AssocEmail)
 	form.AssocFriendStr = strings.TrimSpace(form.AssocFriendStr)
-	form.DonationToSocietyStr = strings.TrimSpace(form.DonationToSocietyStr)
-	form.DonationToMuseumStr = strings.TrimSpace(form.DonationToMuseumStr)
 
 	if len(form.FirstName) == 0 {
 		form.FirstNameErrorMessage = firstNameErrorMessage
@@ -927,6 +954,13 @@ func simpleValidate(form *paymentFormData) bool {
 		form.FriendStr = "on"
 	} else {
 		form.FriendStr = "off"
+	}
+
+	form.Giftaid = getTickBox(form.GiftaidStr)
+	if form.Giftaid {
+		form.GiftaidStr = "on"
+	} else {
+		form.GiftaidStr = "off"
 	}
 
 	// The associate fields are optional but if you fill in any
@@ -988,7 +1022,7 @@ func simpleValidate(form *paymentFormData) bool {
 // and error messages set otherwise.
 // It's separated out from the first stage of validation because that doesn't
 // need to connect to the database and so can be more easily tested.
-func validate(form *paymentFormData, db *database.Database) bool {
+func validate(form *PaymentFormData, db *database.Database) bool {
 
 	valid := simpleValidate(form)
 	if !valid {
@@ -1043,7 +1077,7 @@ const paymentPageTemplateStr = `
 <head>
     <title>Membership Renewal</title>
 </head>
-	<body style='font-size: 100%%'>
+	<body style='font-size: 100%'>
 		<h2>Leatherhead & District local history Society</h2>
 
 		<h3>Membership Renewal {{.PaymentYear}}</h3>
@@ -1076,89 +1110,103 @@ const paymentPageTemplateStr = `
 			&nbsp;
 		</p>
 		<form action="/displayPaymentForm" method="POST">	
-		<table style='font-size: 100%%'>
+			<table style='font-size: 100%'>
 				<tr>
-					<td style="border: 0">First Name:</td>
-					<td style="border: 0"><input type='text' size='40' name='first_name' value='{{.FirstName}}'></td>
-					<td style="border: 0"><span style="color:red;">{{.FirstNameErrorMessage}}</span></td>
+					<td style='border: 0'>First Name:</td>
+					<td style='border: 0'><input type='text' size='40' name='first_name' value='{{.FirstName}}'></td>
+					<td style='border: 0'><span style="color:red;">{{.FirstNameErrorMessage}}</span></td>
 				</tr>
 
 				<tr>
-					<td style="border: 0">Last Name:</td>
-					<td style="border: 0"><input type='text' size='40' name='last_name' value='{{.LastName}}'></td>
-					<td style="border: 0"><span style="color:red;">{{.LastNameErrorMessage}}</span></td>
+					<td style='border: 0'>Last Name:</td>
+					<td style='border: 0'><input type='text' size='40' name='last_name' value='{{.LastName}}'></td>
+					<td style='border: 0'><span style="color:red;">{{.LastNameErrorMessage}}</span></td>
 				</tr>
 
 				<tr>
-					<td style="border: 0">Email Address:</td>
-					<td style="border: 0"><input type='text' size='40' name='email' value='{{.Email}}'></td>
-					<td style="border: 0"><span style="color:red;">{{.EmailErrorMessage}}</span></td>
+					<td style='border: 0'>Email Address:</td>
+					<td style='border: 0'><input type='text' size='40' name='email' value='{{.Email}}'></td>
+					<td style='border: 0'><span style="color:red;">{{.EmailErrorMessage}}</span></td>
 				</tr>
 				<tr>
-					<td style="border: 0">Friend of the Museum (£5):</td>
-					<td style="border: 0"><input type='checkbox' name='friend' {{.Friend}}></td>
-					<td style="border: 0">&nbsp;</td>
+					<td style='border: 0'>Friend of the Museum (£5):</td>
+					<td style='border: 0; '>
+						<input style='transform: scale(1.5);' type='checkbox' name='friend' {{.Friend}}>
+					</td>
+					<td style='border: 0'>&nbsp;</td>
 				</tr>
 				<tr>
-					<td style="border: 0">&nbsp;</td>
-					<td style="border: 0">&nbsp;</td>
-					<td style="border: 0">&nbsp;</td>
+					<td style='border: 0'>Donation to the Society:</td>
+					<td style='border: 0'><input type='text' size='40' name='donation_to_society' value='{{.DonationToSocietyStr}}'></td>
+					<td style='border: 0;'><span style="color:red;">{{.DonationToSocietyErrorMessage}}</span></td>
 				</tr>
 				<tr>
-					<td style="border: 0" colspan='3'>
+					<td style='border: 0'>Donation to the Museum:</td>
+					<td style='border: 0'><input type='text' size='40' name='donation_to_museum' value='{{.DonationToMuseumStr}}'></td>
+					<td style='border: 0'><span style="color:red;">{{.DonationToMuseumErrorMessage}}</span></td>
+				</tr>
+				<tr>
+					<td style='border: 0'>Giftaid:</td>
+					<td style='border: 0 '>
+						<input style='transform: scale(1.5);' type='checkbox' name='giftaid' {{.Giftaid}}>
+					</td>
+					<td style='border: 0'>&nbsp;</td>
+				</tr>
+				<tr>
+					<td style='border: 0' colspan='3'>&nbsp;</td>
+				</tr>
+				<tr>
+					<td style='border: 0' colspan='3'>
+						Tick the Giftaid box if you are currently a UK tax payer and 
+						consent to Gift Aid.
+						If you pay less income tax and/or capital gains tax 
+						than the amount of Gift Aid paid on all your donations, 
+						you are liable to pay the difference to HMRC.
+					</td>
+				</tr>
+				<tr>
+					<td style='border: 0' colspan='3'>&nbsp;</td>
+				</tr>
+				
+				<tr>
+					<td style='border: 0' colspan='3'>&nbsp;</td>
+				</tr>
+
+				<tr>
+					<td style='border: 0' colspan='3'>
 						If there are two members at your address, 
 						fill in the other member's details below:
 					</td>
 				</tr>
 				<tr>
-					<td style="border: 0">Associate First Name:</td>
-					<td style="border: 0"><input type='text' size='40' name='assoc_first_name' value='{{.AssocFirstName}}'></td>
-					<td style="border: 0"><span style="color:red;">{{.AssocFirstNameErrorMessage}}</span></td>
+					<td style='border: 0'>Associate First Name:</td>
+					<td style='border: 0'><input type='text' size='40' name='assoc_first_name' value='{{.AssocFirstName}}'></td>
+					<td style='border: 0'><span style="color:red;">{{.AssocFirstNameErrorMessage}}</span></td>
 				</tr>
 
 				<tr>
-					<td style="border: 0">Associate Last Name:</td>
-					<td style="border: 0"><input type='text' size='40' name='assoc_last_name' value='{{.AssocLastName}}'></td>
-					<td style="border: 0"><span style="color:red;">{{.AssocLastNameErrorMessage}}</span></td>
+					<td style='border: 0'>Associate Last Name:</td>
+					<td style='border: 0'><input type='text' size='40' name='assoc_last_name' value='{{.AssocLastName}}'></td>
+					<td style='border: 0'><span style="color:red;">{{.AssocLastNameErrorMessage}}</span></td>
 				</tr>
 
 				<tr>
-					<td style="border: 0">Email Address (optional):</td>
-					<td style="border: 0"><input type='text' size='40' name='assoc_email' value='{{.AssocEmail}}'></td>
-					<td style="border: 0">&nbsp;</td>
+					<td style='border: 0'>Email Address (optional):</td>
+					<td style='border: 0'><input type='text' size='40' name='assoc_email' value='{{.AssocEmail}}'></td>
+					<td style='border: 0'>&nbsp;</td>
 				</tr>
 				<tr>
-					<td style="border: 0">Friend of the Museum (£5):</td>
-					<td style="border: 0"><input type='checkbox' name='assoc_friend' {{.Friend}}></td>
-					<td style="border: 0">&nbsp;</td>
-				</tr>
-				<tr>
-					<td style="border: 0">&nbsp;</td>
-					<td style="border: 0">&nbsp;</td>
-					<td style="border: 0">&nbsp;</td>
-				</tr>
-				<tr>
-					<td style="border: 0" colspan='3'>
-						If you wish to add donations, 
-						please enter them below:
+					<td style='border: 0'>Friend of the Museum (£5):</td>
+					<td style='border: 0'>
+						<input style='transform: scale(1.5);' type='checkbox' name='assoc_friend' {{.Friend}}>
 					</td>
+					<td style='border: 0'>&nbsp;</td>
 				</tr>
-				
+
 				<tr>
-					<td style="border: 0">Donation to the Society:</td>
-					<td style="border: 0"><input type='text' size='40' name='donation_to_society' value='{{.DonationToSociety}}'></td>
-					<td style="border: 0"><span style="color:red;">{{.DonationToSocietyErrorMessage}}</span></td>
+					<td style='border: 0' colspan='3'>&nbsp;</td>
 				</tr>
-				<tr>
-					<td style="border: 0">Donation to the Museum:</td>
-					<td style="border: 0"><input type='text' size='40' name='donation_to_museum' value='{{.DonationToMuseum}}'></td>
-					<td style="border: 0"><span style="color:red;">{{.DonationToMuseumErrorMessage}}</span></td>
-				</tr>
-				<tr>
-					<td style="border: 0">&nbsp;</td>
-					<td style="border: 0">&nbsp;</td>
-					<td style="border: 0">&nbsp;</td>
-				</tr>
+
 			</table>
 			<input type="submit" value="Submit">
 		</form>
@@ -1169,7 +1217,7 @@ const paymentPageTemplateStr = `
 const paymentConfirmationPageTemplateStr = `
 <html>
     <head><title>payment confirmation</title></head>
-	<body style='font-size: 100%%'>
+	<body style='font-size: 100%'>
 		<h2>Leatherhead & District Local History Society</h2>
 		<h3>Membership Renewal {{.MembershipYear}}</h3>
 		<p>
@@ -1190,7 +1238,7 @@ const paymentConfirmationPageTemplateStr = `
 const successPageTemplateStr = `
 <html>
 	<head><title>Payment Successful</title></head>
-    <body style='font-size: 100%%'>
+    <body style='font-size: 100%'>
         <h1>Thank you</h1>
 		<p>
 			Your membership has been renewed until the end of {{.MembershipYear}}.
@@ -1211,7 +1259,7 @@ const successPageTemplateStr = `
 const cancelHTML = `
 <html>
   <head><title>cancelled</title></head>
-  <body style='font-size: 100%%'>
+  <body style='font-size: 100%'>
     <h1>Payment cancelled</h1>
   </body>
 </html>

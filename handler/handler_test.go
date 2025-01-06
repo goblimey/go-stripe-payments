@@ -33,13 +33,13 @@ func TestSimpleValidation1(t *testing.T) {
 
 	var testData = []struct {
 		description string
-		form        paymentFormData
+		form        PaymentFormData
 		wantValid   bool
-		want        paymentFormData
+		want        PaymentFormData
 	}{
 		{
 			"valid - all",
-			paymentFormData{ // This also checks the Trimspace calls.
+			PaymentFormData{ // This also checks the Trimspace calls.
 				Valid:       false,
 				PaymentYear: 2024, OrdinaryMemberFeeStr: "1.2", AssociateMemberFeeStr: "3.4", FriendFeeStr: "5.6",
 				FirstName: " a\t", LastName: " b ", Email: " a@b.com ", FriendStr: "on",
@@ -50,7 +50,7 @@ func TestSimpleValidation1(t *testing.T) {
 				AssocFirstNameErrorMessage: "", AssocLastNameErrorMessage: "", DonationToSocietyErrorMessage: "", DonationToMuseumErrorMessage: "",
 			},
 			true,
-			paymentFormData{
+			PaymentFormData{
 				true, 2024, "1.2", "3.4", "5.6",
 				"a", "b", "a@b.com", "on",
 				"f", "l", "a@l.com", "on", "7.8", "8.9",
@@ -60,13 +60,13 @@ func TestSimpleValidation1(t *testing.T) {
 		},
 		{
 			"valid - no friends",
-			paymentFormData{
+			PaymentFormData{
 				false, 2024, "24.0", "6.0", "5.0", "a", "b", "a@b.com", "off", "f", "l", "a@l.com", "off",
 				"1.5", "2.5", false, false,
 				0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, "", "", "", "", "", "", "", "",
 			},
 			true,
-			paymentFormData{
+			PaymentFormData{
 				true, 2024, "24.0", "6.0", "5.0", "a", "b", "a@b.com", "off", "f", "l", "a@l.com", "off",
 				"1.5", "2.5", false, false,
 				24.0, 6.0, 5, 1.5, 2.5, 0, 0, "", "", "", "", "", "", "", "",
@@ -74,13 +74,13 @@ func TestSimpleValidation1(t *testing.T) {
 		},
 		{
 			"valid - no associate",
-			paymentFormData{
+			PaymentFormData{
 				false, 2024, "24.0", "6.0", "5.0", "a", "b", "a@b.com", "on", "", "", "", "",
 				"1.5", "2.5", false, false,
 				0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, "", "", "", "", "", "", "", "",
 			},
 			true,
-			paymentFormData{
+			PaymentFormData{
 				true, 2024, "24.0", "6.0", "5.0", "a", "b", "a@b.com", "on", "", "", "", "off",
 				"1.5", "2.5", true, false,
 				24.0, 6.0, 5, 1.5, 2.5, 0, 0, "", "", "", "", "", "", "", "",
@@ -88,13 +88,13 @@ func TestSimpleValidation1(t *testing.T) {
 		},
 		{
 			"valid - ordinary member is not friend",
-			paymentFormData{
+			PaymentFormData{
 				false, 2024, "24.0", "6.0", "5.0", "a", "b", "a@b.com", "", "f", "l", "a@l.com", "on",
 				"1.5", "2.5", false, false,
 				0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, "", "", "", "", "", "", "", "",
 			},
 			true,
-			paymentFormData{
+			PaymentFormData{
 				true, 2024, "24.0", "6.0", "5.0", "a", "b", "a@b.com", "off", "f", "l", "a@l.com", "on",
 				"1.5", "2.5", false, true,
 				24.0, 6.0, 5, 1.5, 2.5, 0, 0, "", "", "", "", "", "", "", "",
@@ -102,13 +102,13 @@ func TestSimpleValidation1(t *testing.T) {
 		},
 		{
 			"valid - associate is not friend",
-			paymentFormData{
+			PaymentFormData{
 				false, 2024, "24.0", "6.0", "5.0", "a", "b", "a@b.com", "on", "f", "l", "a@l.com", "off",
 				"1.5", "2.5", false, false,
 				0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, "", "", "", "", "", "", "", "",
 			},
 			true,
-			paymentFormData{
+			PaymentFormData{
 				true, 2024, "24.0", "6.0", "5.0", "a", "b", "a@b.com", "on", "f", "l", "a@l.com", "off",
 				"1.5", "2.5", true, false,
 				24.0, 6.0, 5, 1.5, 2.5, 0, 0, "", "", "", "", "", "", "", "",
@@ -116,13 +116,13 @@ func TestSimpleValidation1(t *testing.T) {
 		},
 		{
 			"ordinary member first name missing",
-			paymentFormData{
+			PaymentFormData{
 				false, 2024, "24.0", "6.0", "5.0", "", "b", "a@b.com", "on", "f", "l", "a@l.com", "on",
 				"1.5", "2.5", false, false,
 				0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, "", "", "", "", "", "", "", "",
 			},
 			false,
-			paymentFormData{
+			PaymentFormData{
 				false, 2024, "24.0", "6.0", "5.0", "", "b", "a@b.com", "on", "f", "l", "a@l.com", "on",
 				"1.5", "2.5", true, true,
 				24.0, 6.0, 5, 1.5, 2.5, 0, 0, "", firstNameErrorMessage, "", "", "", "", "", "",
@@ -130,13 +130,13 @@ func TestSimpleValidation1(t *testing.T) {
 		},
 		{
 			"ordinary member last name missing",
-			paymentFormData{
+			PaymentFormData{
 				false, 2024, "24.0", "6.0", "5.0", "a", "", "a@b.com", "on", "f", "l", "a@l.com", "on",
 				"1.5", "2.5", false, false,
 				0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, "", "", "", "", "", "", "", "",
 			},
 			false,
-			paymentFormData{
+			PaymentFormData{
 				false, 2024, "24.0", "6.0", "5.0", "a", "", "a@b.com", "on", "f", "l", "a@l.com", "on",
 				"1.5", "2.5", true, true,
 				24.0, 6.0, 5, 1.5, 2.5, 0, 0, "", "", lastNameErrorMessage, "", "", "", "", "",
@@ -144,13 +144,13 @@ func TestSimpleValidation1(t *testing.T) {
 		},
 		{
 			"ordinary member email missing",
-			paymentFormData{
+			PaymentFormData{
 				false, 2024, "24.0", "6.0", "5.0", "a", "b", "", "on", "f", "l", "b@l.com", "on",
 				"1.5", "2.5", false, false,
 				0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, "", "", "", "", "", "", "", "",
 			},
 			false,
-			paymentFormData{
+			PaymentFormData{
 				false, 2024, "24.0", "6.0", "5.0", "a", "b", "", "on", "f", "l", "b@l.com", "on",
 				"1.5", "2.5", true, true,
 				24.0, 6.0, 5, 1.5, 2.5, 0, 0, "", "", "", emailErrorMessage, "", "", "", "",
@@ -158,13 +158,13 @@ func TestSimpleValidation1(t *testing.T) {
 		},
 		{
 			"associate member first name missing",
-			paymentFormData{
+			PaymentFormData{
 				false, 2024, "24.0", "6.0", "5.0", "a", "b", "a@l.com", "on", "", "l", "b@l.com", "on",
 				"1.5", "2.5", false, false,
 				0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, "", "", "", "", "", "", "", "",
 			},
 			false,
-			paymentFormData{
+			PaymentFormData{
 				false, 2024, "24.0", "6.0", "5.0", "a", "b", "a@l.com", "on", "", "l", "b@l.com", "on",
 				"1.5", "2.5", true, true,
 				24.0, 6.0, 5, 1.5, 2.5, 0, 0, "", "", "", "", assocFirstNameErrorMessage, "", "", "",
@@ -172,13 +172,13 @@ func TestSimpleValidation1(t *testing.T) {
 		},
 		{
 			"associate member last name missing",
-			paymentFormData{
+			PaymentFormData{
 				false, 2024, "24.0", "6.0", "5.0", "a", "b", "a@l.com", "", "f", "", "b@l.com", "",
 				"1.5", "2.5", false, false,
 				0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, "", "", "", "", "", "", "", "",
 			},
 			false,
-			paymentFormData{
+			PaymentFormData{
 				false, 2024, "24.0", "6.0", "5.0", "a", "b", "a@l.com", "off", "f", "", "b@l.com", "off",
 				"1.5", "2.5", false, false,
 				24.0, 6.0, 5, 1.5, 2.5, 0, 0, "", "", "", "", "", assocLastNameErrorMessage, "", "",
@@ -186,13 +186,13 @@ func TestSimpleValidation1(t *testing.T) {
 		},
 		{
 			"associate member but no ordinary member",
-			paymentFormData{
+			PaymentFormData{
 				false, 2024, "24.0", "6.0", "5.0", "", "", "", "", "f", "l", "a@l.com", "",
 				"1.5", "2.5", false, false,
 				0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, "", "", "", "", "", "", "", "",
 			},
 			false,
-			paymentFormData{
+			PaymentFormData{
 				false, 2024, "24.0", "6.0", "5.0", "", "", "", "off", "f", "l", "a@l.com", "off",
 				"1.5", "2.5", false, false,
 				24.0, 6.0, 5, 1.5, 2.5, 0, 0, "", firstNameErrorMessage, lastNameErrorMessage, emailErrorMessage, "", "", "", "",
@@ -200,13 +200,13 @@ func TestSimpleValidation1(t *testing.T) {
 		},
 		{
 			"associate email address but associate member's name missing",
-			paymentFormData{
+			PaymentFormData{
 				false, 2024, "24.0", "6.0", "5.0", "a", "b", "a@b.com", "on", "", "", "a@l.com", "on",
 				"1.5", "2.5", false, false,
 				0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, "", "", "", "", "", "", "", "",
 			},
 			false,
-			paymentFormData{
+			PaymentFormData{
 				false, 2024, "24.0", "6.0", "5.0", "a", "b", "a@b.com", "on", "", "", "a@l.com", "on",
 				"1.5", "2.5", true, true,
 				24.0, 6.0, 5, 1.5, 2.5, 0, 0, "", "", "", "", assocFirstNameErrorMessage, assocLastNameErrorMessage, "", "",
@@ -214,13 +214,13 @@ func TestSimpleValidation1(t *testing.T) {
 		},
 		{
 			"associate friend tick box but associate member's name missing",
-			paymentFormData{
+			PaymentFormData{
 				false, 2024, "24.0", "6.0", "5.0", "a", "b", "a@b.com", "on", "", "", "", "on",
 				"1.5", "2.5", false, false,
 				0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, "", "", "", "", "", "", "", "",
 			},
 			false,
-			paymentFormData{
+			PaymentFormData{
 				false, 2024, "24.0", "6.0", "5.0", "a", "b", "a@b.com", "on", "", "", "", "on",
 				"1.5", "2.5", true, true,
 				24.0, 6.0, 5, 1.5, 2.5, 0, 0, "", "", "", "", assocFirstNameErrorMessage, assocLastNameErrorMessage, "", "",
@@ -228,12 +228,12 @@ func TestSimpleValidation1(t *testing.T) {
 		},
 		{
 			"donation to society invalid number",
-			paymentFormData{
+			PaymentFormData{
 				false, 2024, "24.0", "6.0", "5.0", "a", "b", "a@b.com", "off", "f", "l", "a@l.com", "off",
 				"junk", "2.5", false, false,
 				0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, "", "", "", "", "", "", "", "",
 			}, false,
-			paymentFormData{
+			PaymentFormData{
 				false, 2024, "24.0", "6.0", "5.0", "a", "b", "a@b.com", "off", "f", "l", "a@l.com", "off",
 				"junk", "2.5", false, false,
 				24.0, 6.0, 5.0, 0.0, 2.5, 0, 0, "", "", "", "", "", "", invalidNumber, "",
@@ -241,13 +241,13 @@ func TestSimpleValidation1(t *testing.T) {
 		},
 		{
 			"donation to museum invalid number",
-			paymentFormData{
+			PaymentFormData{
 				false, 2024, "24.0", "6.0", "5.0", "a", "b", "a@b.com", "on", "f", "l", "a@l.com", "on",
 				"1.5", "junk", false, false,
 				0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, "", "", "", "", "", "", "", "",
 			},
 			false,
-			paymentFormData{
+			PaymentFormData{
 				false, 2024, "24.0", "6.0", "5.0", "a", "b", "a@b.com", "on", "f", "l", "a@l.com", "on",
 				"1.5", "junk", true, true,
 				24.0, 6.0, 5, 1.5, 0.0, 0, 0, "", "", "", "", "", "", "", invalidNumber,

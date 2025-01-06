@@ -13,20 +13,24 @@ CREATE TABLE public.membership_sales
     ms_membership_year integer NOT NULL,
     ms_usr1_id integer NOT NULL,
     ms_usr1_fee REAL NOT NULL,
-    ms_usr1_friend boolean NOT NULL,
-    ms_usr1_friend_fee REAL,
-    ms_usr2_id integer,
-    -- null if no associate
-    ms_usr2_fee REAL NOT NULL,
+    ms_usr1_friend boolean NOT NULL DEFAULT false,
+    -- 0.0 if not a friend.
+    ms_usr1_friend_fee REAL NOT NULL default 0.0,
+    -- 0 if no associate
+    ms_usr2_id integer DEFAULT 0,
     -- 0.0 if no associate
-    ms_usr2_friend boolean NOT NULL,
-    -- false if no associate
-    ms_usr2_friend_fee REAL NOT NULL,
-    -- 0.0 if no associate
-    ms_donation REAL NOT NULL,
-    ms_donation_museum REAL NOT NULL,
+    ms_usr2_fee REAL NOT NULL default 0.0,
+    -- false if no associate.
+    ms_usr2_friend boolean NOT NULL DEFAULT false,
+    -- 0.0 if no associate.
+    ms_usr2_friend_fee REAL NOT NULL DEFAULT 0.0,
+    -- 0.0 if no donation.
+    ms_donation REAL NOT NULL DEFAULT 0.0,
+    -- 0.0 if no donation to museum.
+    ms_donation_museum REAL NOT NULL DEFAULT 0.0,
+    ms_gift_aid boolean NOT NULL DEFAULT false,
     timestamp_create timestamp
-    without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+    without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP 
 );
 
     ALTER TABLE public.membership_sales OWNER TO postgres;
