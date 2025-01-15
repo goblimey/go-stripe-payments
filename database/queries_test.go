@@ -3,12 +3,13 @@ package database
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
 
 // databaseList is a list of database types that will be used in
-// integration tests.  (Exhaustive tests are done using only SQLite.)
+// integration tests.  (Exhaustive tests may be done using only SQLite.)
 var databaseList = []string{"postgres", "sqlite"}
 
 // TestGetPaymentYear checks that GetSellingYear correctly identifies
@@ -99,7 +100,7 @@ func TestGetFieldID(t *testing.T) {
 				return
 			}
 
-			defer db.Connection.Close()
+			defer db.Close()
 
 			gotID, gotErr := db.getFieldID(td.fieldName)
 
@@ -114,6 +115,7 @@ func TestGetFieldID(t *testing.T) {
 	}
 }
 
+// TestGetFirstNameID checks getFirstNameID.
 func TestGetFirstNameID(t *testing.T) {
 
 	for _, dbType := range databaseList {
@@ -125,7 +127,7 @@ func TestGetFirstNameID(t *testing.T) {
 			return
 		}
 
-		defer db.Connection.Close()
+		defer db.Close()
 
 		gotID, gotErr := db.getFirstNameID()
 
@@ -139,6 +141,7 @@ func TestGetFirstNameID(t *testing.T) {
 	}
 }
 
+// TestGetLastNameID checks getLastNameID.
 func TestGetLastNameID(t *testing.T) {
 
 	for _, dbType := range databaseList {
@@ -150,7 +153,7 @@ func TestGetLastNameID(t *testing.T) {
 			return
 		}
 
-		defer db.Connection.Close()
+		defer db.Close()
 
 		gotID, gotErr := db.getLastNameID()
 
@@ -164,6 +167,7 @@ func TestGetLastNameID(t *testing.T) {
 	}
 }
 
+// TestGetEmailID checks getEmailID.
 func TestGetEmailID(t *testing.T) {
 
 	for _, dbType := range databaseList {
@@ -175,9 +179,35 @@ func TestGetEmailID(t *testing.T) {
 			return
 		}
 
-		defer db.Connection.Close()
+		defer db.Close()
 
 		gotID, gotErr := db.getEmailID()
+
+		if gotErr != nil {
+			t.Error(db.Type + ": " + gotErr.Error())
+		}
+
+		if gotID <= 0 {
+			t.Errorf("%s want i > 0 got %d", db.Type, gotID)
+		}
+	}
+}
+
+// TestGetGiftaidID checks getGiftaidID.
+func TestGetGiftaidID(t *testing.T) {
+
+	for _, dbType := range databaseList {
+
+		db, connError := SetupDBForTesting(dbType)
+
+		if connError != nil {
+			t.Error(connError)
+			return
+		}
+
+		defer db.Close()
+
+		gotID, gotErr := db.getGiftaidID()
 
 		if gotErr != nil {
 			t.Error(db.Type + ": " + gotErr.Error())
@@ -201,7 +231,7 @@ func TestMemberExists(t *testing.T) {
 			return
 		}
 
-		defer db.Connection.Close()
+		defer db.Close()
 
 		id, searchErr := db.GetUserIDofMember("luiGi", "SchmidT", "Foo@bar.com")
 		if searchErr != nil {
@@ -235,8 +265,8 @@ func TestMemberExistsSQLite(t *testing.T) {
 		shouldWork  bool
 	}{
 		{"no match", "junk", "junk", "junk", false},
-		{"all match", "luiGi", "SchmidT", "Foo@bar.com", true},
-		{"email matches", "uiGi", "chmidT", "Foo@bar.com", true},
+		{"all match", "luiGi", "SchmidT", strings.ToUpper(TestAssociateEmail), true},
+		{"email matches", "uiGi", "chmidT", TestAssociateEmail, true},
 		{"names match", "luiGi", "SchmidT", "junk", true},
 	}
 
@@ -263,125 +293,149 @@ func TestMemberExistsSQLite(t *testing.T) {
 // TestSetLastPayment checks SetLastPayment.
 func TestSetLastPayment(t *testing.T) {
 
-	db, connError := SetupDBForTesting("postgres")
+	for _, dbType := range databaseList {
 
-	if connError != nil {
-		t.Error(connError)
-		return
-	}
+		db, connError := SetupDBForTesting(dbType)
 
-	defer db.Connection.Close()
+		if connError != nil {
+			t.Error(connError)
+			return
+		}
 
-	userID, searchErr := db.GetUserIDofMember("luiGi", "SchmidT", "Foo@bar.com")
-	if searchErr != nil {
-		t.Error(" - expected Schmidt to exist")
-	}
+		defer db.Close()
 
-	err := db.SetLastPayment(userID, 2.5)
-	if err != nil {
-		t.Error(err)
+		userID, searchErr := db.GetUserIDofMember("luiGi", "SchmidT", "Foo@bar.com")
+		if searchErr != nil {
+			t.Error(" - expected Schmidt to exist")
+		}
+
+		err := db.SetLastPayment(userID, 2.5)
+		if err != nil {
+			t.Error(err)
+		}
 	}
 }
 
 // TestSetMembersAtAddress checks SetMembersAtAddress.
 func TestSetMembersAtAddress(t *testing.T) {
 
-	db, connError := SetupDBForTesting("postgres")
+	for _, dbType := range databaseList {
 
-	if connError != nil {
-		t.Error(connError)
-		return
-	}
+		db, connError := SetupDBForTesting(dbType)
 
-	defer db.Connection.Close()
+		if connError != nil {
+			t.Error(connError)
+			break
+		}
 
-	// userID, searchErr := db.GetUserIDofMember("luiGi", "SchmidT", "Foo@bar.com")
-	userID, searchErr := db.GetUserIDofMember("simon", "ritchie", "simonritchie.uk@gmail.com")
-	if searchErr != nil {
-		t.Error(" - expected Schmidt to exist")
-	}
+		defer db.Close()
 
-	const want = 5
-	setError := db.SetMembersAtAddress(userID, want)
-	if setError != nil {
-		t.Error(setError)
-	}
+		userID, searchErr := db.GetUserIDofMember("luiGi", "SchmidT", "Foo@bar.com")
+		// userID, searchErr := db.GetUserIDofMember("simon", "ritchie", "simonritchie.uk@gmail.com")
+		if searchErr != nil {
+			t.Error(" - expected Schmidt to exist")
+		}
 
-	const sql = `select usd_value from adm_user_data
+		const want = 5
+		setError := db.SetMembersAtAddress(userID, want)
+		if setError != nil {
+			t.Error(setError)
+		}
+
+		const sql = `select usd_value from adm_user_data
 		where usd_usr_id = $1
 		AND usd_usf_id = $2`
-	var got int
-	err := db.QueryRow(sql, userID, db.membersAtAddressID).Scan(&got)
-	if err != nil {
-		t.Error(err)
-		return
-	}
+		var got int
+		err := db.QueryRow(sql, userID, db.membersAtAddressID).Scan(&got)
+		if err != nil {
+			t.Error(err)
+			break
+		}
 
-	if want != got {
-		t.Errorf("want %d got %d", want, got)
+		if want != got {
+			t.Errorf("want %d got %d", want, got)
+			break
+		}
 	}
 }
 
 // TestSetDateLastPaid checks SetDateLastPaid.
 func TestSetDateLastPaid(t *testing.T) {
+	for _, dbType := range databaseList {
 
-	db, connError := SetupDBForTesting("postgres")
+		db, connError := SetupDBForTesting(dbType)
 
-	if connError != nil {
-		t.Error(connError)
-		return
-	}
+		if connError != nil {
+			t.Error(connError)
+			break
+		}
 
-	defer db.Connection.Close()
+		defer db.Close()
 
-	userID, searchErr := db.GetUserIDofMember("luiGi", "SchmidT", "Foo@bar.com")
-	if searchErr != nil {
-		t.Error(" - expected Schmidt to exist")
-	}
+		userID, searchErr := db.GetUserIDofMember("luiGi", "SchmidT", "Foo@bar.com")
+		if searchErr != nil {
+			t.Error(" - expected Schmidt to exist")
+		}
 
-	london, _ := time.LoadLocation("Europe/London")
-	tm := time.Date(2024, time.February, 14, 0, 0, 0, 0, london)
-	const want = "2024-02-14 00:00:00+00"
-	setError := db.SetDateLastPaid(userID, tm)
-	if setError != nil {
-		t.Error(setError)
-	}
+		london, _ := time.LoadLocation("Europe/London")
+		tm := time.Date(2024, time.February, 14, 0, 0, 0, 0, london)
 
-	const sql = `select usd_value from adm_user_data
-		where usd_usr_id = $1
-		AND usd_usf_id = $2`
-	var got string
-	err := db.QueryRow(sql, userID, db.dateLastPaidID).Scan(&got)
-	if err != nil {
-		t.Error(err)
-		return
-	}
+		setError := db.SetDateLastPaid(userID, tm)
+		if setError != nil {
+			t.Errorf("%s: %v", dbType, setError)
+			break
+		}
 
-	if want != got {
-		t.Errorf("want %s got %s", want, got)
+		const sqlCommand = `
+				select usd_value  
+				from adm_user_data
+				where usd_usr_id = $1
+				AND usd_usf_id = $2`
+
+		var got string
+		queryAndScanError := db.QueryRow(sqlCommand, userID, db.dateLastPaidID).Scan(&got)
+		if queryAndScanError != nil {
+			t.Errorf("%s: %v", dbType, queryAndScanError)
+			break
+		}
+
+		// SQLite and postgres provide the resulting date/time value in slightly
+		// different formats.
+		var want string
+		if db.Type == "sqlite" {
+			want = "2024-02-14 00:00:00"
+		} else {
+			want = "2024-02-14 00:00:00+00"
+		}
+		if want != got {
+			t.Errorf("%s: want %s got %s", dbType, want, got)
+			break
+		}
 	}
 }
 
-// TestMemberExists checks MemberExists.
-func TestSetFriend(t *testing.T) {
+// TestSetFriendField checks SetFriendField.
+func TestSetFriendField(t *testing.T) {
+	for _, dbType := range databaseList {
 
-	db, connError := SetupDBForTesting("postgres")
+		db, connError := SetupDBForTesting(dbType)
 
-	if connError != nil {
-		t.Error(connError)
-		return
-	}
+		if connError != nil {
+			t.Error(connError)
+			return
+		}
 
-	defer db.Connection.Close()
+		defer db.Close()
 
-	userID, searchErr := db.GetUserIDofMember("luiGi", "SchmidT", "Foo@bar.com")
-	if searchErr != nil {
-		t.Error(" - expected Schmidt to exist")
-	}
+		userID, searchErr := db.GetUserIDofMember("luiGi", "SchmidT", "Foo@bar.com")
+		if searchErr != nil {
+			t.Error(" - expected Schmidt to exist")
+		}
 
-	err := db.SetFriendTickBox(userID, true)
-	if err != nil {
-		t.Error(err)
+		err := db.SetFriendField(userID, true)
+		if err != nil {
+			t.Error(err)
+		}
 	}
 }
 
@@ -397,7 +451,7 @@ func TestSetMemberEndDate(t *testing.T) {
 			return
 		}
 
-		defer db.Connection.Close()
+		defer db.Close()
 
 		var userID int
 		if db.Type == "sqlite" {
@@ -406,14 +460,97 @@ func TestSetMemberEndDate(t *testing.T) {
 			userID = TestUserIDPostgres
 		}
 
-		checkError := checkMemberEndYear(db, userID, 2025)
-		if checkError != nil {
-			t.Error(checkError)
+		// Set the member's end date to 2025 and check it.
+		setError := db.SetMemberEndDate(userID, 2025)
+		if setError != nil {
+			t.Error(dbType + ": " + setError.Error())
+			return
+		}
+		checkError2 := checkMemberEndYear(db, userID, 2025)
+		if checkError2 != nil {
+			t.Error(dbType + ": " + checkError2.Error())
+			return
+		}
+	}
+}
+
+func TestSetGiftaidField(t *testing.T) {
+
+	for _, dbType := range databaseList {
+		db, connError := SetupDBForTesting(dbType)
+
+		if connError != nil {
+			t.Error(connError)
+			return
+		}
+
+		defer db.Close()
+
+		giftaidID, fetchIDErr := db.getGiftaidID()
+		if fetchIDErr != nil {
+			t.Errorf("%s: %v", db.Type, fetchIDErr)
+		}
+
+		var userID int
+		if db.Type == "sqlite" {
+			userID = TestUserIDSQLite
+		} else {
+			userID = TestAssociateIDPostgres
+		}
+
+		// Delete any existing giftaid field for the test user.
+		const deleteGiftaidCMD = `
+			DELETE FROM adm_user_data
+			WHERE usd_usr_id = $1
+			AND usd_usf_id = $2;
+		`
+		_, execError := db.Exec(deleteGiftaidCMD, userID, giftaidID)
+		if execError != nil {
+			t.Errorf("%s: %v", db.Type, execError)
+			break
+		}
+
+		// Create a giftaid field set to true.
+		createErr1 := db.SetGiftaidField(userID, true)
+		if createErr1 != nil {
+			t.Errorf("%s: %v", db.Type, createErr1)
+			break
+		}
+
+		// Check the field - should be true.
+		got1, err1 := db.GetGiftaidField(userID)
+
+		if err1 != nil {
+			t.Error(err1)
+			return
+		}
+
+		if !got1 {
+			t.Errorf("%s: expected giftaid to be set true for user %d", db.Type, userID)
+		}
+
+		// Update the giftaid field to false.
+		createErr := db.SetGiftaidField(userID, false)
+		if createErr != nil {
+			t.Errorf("%s: %v", db.Type, createErr)
+		}
+
+		got2, err2 := db.GetGiftaidField(userID)
+
+		if err2 != nil {
+			t.Error(err2)
+			return
+		}
+		// Check the field - should be false.
+		if got2 {
+			t.Errorf("%s: expected giftaid to be set false for user %d", db.Type, userID)
+			return
 		}
 	}
 }
 
 func TestMembershipSale(t *testing.T) {
+
 	db, connError := SetupDBForTesting("postgres")
 
 	if connError != nil {
@@ -421,7 +558,7 @@ func TestMembershipSale(t *testing.T) {
 		return
 	}
 
-	defer db.Connection.Close()
+	defer db.Close()
 
 	var testData = []struct {
 		description string
@@ -429,47 +566,171 @@ func TestMembershipSale(t *testing.T) {
 		want        MembershipSale
 	}{
 		{
-			"all",
-			MembershipSale{0, "a", "b", "x", 2025, 1, 24.0, true, 5, 2, 6.0, true, 7, 42.0, 43.0},
-			MembershipSale{0, "a", "b", "", 2025, 1, 24.0, true, 5, 2, 6.0, true, 7, 42.0, 43.0},
+			"no associate",
+			MembershipSale{
+				ID: 0, PaymentService: "c", PaymentStatus: "d", PaymentID: "e",
+				MembershipYear: 2025, OrdinaryMemberID: TestUserIDPostgres,
+				OrdinaryMemberFee:      24.0,
+				OrdinaryMemberIsFriend: true, OrdinaryMemberFriendFee: 5,
+				DonationToSociety: 2,
+				DonationToMuseum:  6.0, Giftaid: true,
+				AssociateMemberID: 0,
+				// These values should be ignored.
+				AssociateMemberFee:  42.0,
+				AssocMemberIsFriend: true, AssociateMemberFriendFee: 43.0,
+			},
+			MembershipSale{
+				ID: 0, PaymentService: "c", PaymentStatus: "d", PaymentID: "e",
+				MembershipYear: 2025, OrdinaryMemberID: TestUserIDPostgres,
+				OrdinaryMemberFee:      24.0,
+				OrdinaryMemberIsFriend: true, OrdinaryMemberFriendFee: 5, DonationToSociety: 2,
+				DonationToMuseum: 6.0, Giftaid: true,
+				AssociateMemberID: 0, AssociateMemberFee: 0.0,
+				AssocMemberIsFriend: false, AssociateMemberFriendFee: 0.0,
+			},
 		},
 		{
-			"no associate",
-			MembershipSale{0, "c", "d", "x", 2025, 1, 24.0, true, 5, 0, 6.0, true, 7, 42.0, 43.0},
-
-			MembershipSale{0, "c", "d", "", 2025, 1, 24.0, true, 5, 0, 0.0, false, 0, 42.0, 43.0},
+			"all",
+			MembershipSale{
+				ID: 0, PaymentService: "a", PaymentStatus: "b", PaymentID: "x",
+				MembershipYear: 2025, OrdinaryMemberID: TestUserIDPostgres,
+				OrdinaryMemberFee:      24.0,
+				OrdinaryMemberIsFriend: true, OrdinaryMemberFriendFee: 5,
+				DonationToSociety: 2,
+				DonationToMuseum:  6.0, Giftaid: true,
+				AssociateMemberID: TestAssociateIDPostgres, AssociateMemberFee: 42.0,
+				AssocMemberIsFriend: true, AssociateMemberFriendFee: 43.0,
+			},
+			MembershipSale{
+				ID: 0, PaymentService: "a", PaymentStatus: "b", PaymentID: "x",
+				MembershipYear: 2025, OrdinaryMemberID: TestUserIDPostgres,
+				OrdinaryMemberFee:      24.0,
+				OrdinaryMemberIsFriend: true, OrdinaryMemberFriendFee: 5, DonationToSociety: 2,
+				DonationToMuseum: 6.0, Giftaid: true,
+				AssociateMemberID: TestAssociateIDPostgres, AssociateMemberFee: 42.0,
+				AssocMemberIsFriend: true, AssociateMemberFriendFee: 43.0,
+			},
 		},
+
 		{
 			"associate, no donations",
-			MembershipSale{0, "e", "f", "x", 2025, 1, 24.0, true, 5, 2, 6.0, true, 7, 0.0, 0.0},
-			MembershipSale{0, "e", "f", "", 2025, 1, 24.0, true, 5, 2, 6.0, true, 7, 0.0, 0.0},
+			MembershipSale{
+				ID: 0, PaymentService: "f", PaymentStatus: "g", PaymentID: "h",
+				MembershipYear: 2025, OrdinaryMemberID: TestUserIDPostgres,
+				OrdinaryMemberFee:      24.0,
+				OrdinaryMemberIsFriend: true, OrdinaryMemberFriendFee: 5, Giftaid: true,
+				AssociateMemberID: TestAssociateIDPostgres, AssociateMemberFee: 42.0,
+				AssocMemberIsFriend: true, AssociateMemberFriendFee: 43.0,
+			},
+			MembershipSale{
+				ID: 0, PaymentService: "f", PaymentStatus: "g", PaymentID: "h",
+				MembershipYear: 2025, OrdinaryMemberID: TestUserIDPostgres,
+				OrdinaryMemberFee:      24.0,
+				OrdinaryMemberIsFriend: true, OrdinaryMemberFriendFee: 5, DonationToSociety: 0,
+				DonationToMuseum: 0, Giftaid: true,
+				AssociateMemberID: TestAssociateIDPostgres, AssociateMemberFee: 42.0,
+				AssocMemberIsFriend: true, AssociateMemberFriendFee: 43.0,
+			},
 		},
 		{
 			"no associate, no donations",
-			MembershipSale{0, "g", "h", "x", 2025, 1, 24.0, true, 5, 0, 6.0, true, 7, 0.0, 0.0},
-
-			MembershipSale{0, "g", "h", "", 2025, 1, 24.0, true, 5, 0, 0.0, false, 0, 0.0, 0.0},
+			MembershipSale{
+				ID: 0, PaymentService: "f", PaymentStatus: "g", PaymentID: "h",
+				MembershipYear: 2025, OrdinaryMemberID: TestUserIDPostgres,
+				OrdinaryMemberFee:      24.0,
+				OrdinaryMemberIsFriend: true, OrdinaryMemberFriendFee: 5, Giftaid: true,
+				AssociateMemberID: 0, AssociateMemberFee: 42.0,
+				AssocMemberIsFriend: true, AssociateMemberFriendFee: 43.0,
+			},
+			MembershipSale{
+				ID: 0, PaymentService: "f", PaymentStatus: "g", PaymentID: "h",
+				MembershipYear: 2025, OrdinaryMemberID: TestUserIDPostgres,
+				OrdinaryMemberFee:      24.0,
+				OrdinaryMemberIsFriend: true, OrdinaryMemberFriendFee: 5, DonationToSociety: 0,
+				DonationToMuseum: 0, Giftaid: true,
+				AssociateMemberID: 0, AssociateMemberFee: 0,
+				AssocMemberIsFriend: false, AssociateMemberFriendFee: 0,
+			},
+		},
+		{
+			"ordinary member is friend", // Set just one bool value.
+			MembershipSale{
+				ID: 0, PaymentService: "a", PaymentStatus: "b", PaymentID: "x",
+				MembershipYear: 2025, OrdinaryMemberID: TestUserIDPostgres, OrdinaryMemberFee: 24.0,
+				OrdinaryMemberIsFriend: true, OrdinaryMemberFriendFee: 5, DonationToSociety: 2,
+				DonationToMuseum: 6.0, Giftaid: false,
+				AssociateMemberID: TestAssociateIDPostgres, AssociateMemberFee: 42.0,
+				AssocMemberIsFriend: false, AssociateMemberFriendFee: 43.0,
+			},
+			MembershipSale{
+				ID: 0, PaymentService: "a", PaymentStatus: "b", PaymentID: "x",
+				MembershipYear: 2025, OrdinaryMemberID: TestUserIDPostgres, OrdinaryMemberFee: 24.0,
+				OrdinaryMemberIsFriend: true, OrdinaryMemberFriendFee: 5, DonationToSociety: 2,
+				DonationToMuseum: 6.0, Giftaid: false,
+				AssociateMemberID: TestAssociateIDPostgres, AssociateMemberFee: 42.0,
+				AssocMemberIsFriend: false, AssociateMemberFriendFee: 43.0,
+			},
+		},
+		{
+			"Gifaid", // Set just one bool value.
+			MembershipSale{
+				ID: 0, PaymentService: "a", PaymentStatus: "b", PaymentID: "x",
+				MembershipYear: 2025, OrdinaryMemberID: TestUserIDPostgres, OrdinaryMemberFee: 24.0,
+				OrdinaryMemberIsFriend: false, OrdinaryMemberFriendFee: 5, DonationToSociety: 2,
+				DonationToMuseum: 6.0, Giftaid: true,
+				AssociateMemberID: TestAssociateIDPostgres, AssociateMemberFee: 42.0,
+				AssocMemberIsFriend: false, AssociateMemberFriendFee: 0.0,
+			},
+			MembershipSale{
+				ID: 0, PaymentService: "a", PaymentStatus: "b", PaymentID: "x",
+				MembershipYear: 2025, OrdinaryMemberID: TestUserIDPostgres, OrdinaryMemberFee: 24.0,
+				OrdinaryMemberIsFriend: false, OrdinaryMemberFriendFee: 5, DonationToSociety: 2,
+				DonationToMuseum: 6.0, Giftaid: true,
+				AssociateMemberID: TestAssociateIDPostgres, AssociateMemberFee: 42.0,
+				AssocMemberIsFriend: false, AssociateMemberFriendFee: 0.0,
+			},
+		},
+		{
+			"associate member is friend", // Set just one bool value.
+			MembershipSale{
+				ID: 0, PaymentService: "a", PaymentStatus: "b", PaymentID: "x",
+				MembershipYear: 2025, OrdinaryMemberID: TestUserIDPostgres, OrdinaryMemberFee: 24.0,
+				OrdinaryMemberIsFriend: false, OrdinaryMemberFriendFee: 5, DonationToSociety: 2,
+				DonationToMuseum: 6.0, Giftaid: false,
+				AssociateMemberID: TestAssociateIDPostgres, AssociateMemberFee: 42.0,
+				AssocMemberIsFriend: true, AssociateMemberFriendFee: 43.0,
+			},
+			MembershipSale{
+				ID: 0, PaymentService: "a", PaymentStatus: "b", PaymentID: "x",
+				MembershipYear: 2025, OrdinaryMemberID: TestUserIDPostgres, OrdinaryMemberFee: 24.0,
+				OrdinaryMemberIsFriend: false, OrdinaryMemberFriendFee: 5, DonationToSociety: 2,
+				DonationToMuseum: 6.0, Giftaid: false,
+				AssociateMemberID: TestAssociateIDPostgres, AssociateMemberFee: 42.0,
+				AssocMemberIsFriend: true, AssociateMemberFriendFee: 43.0,
+			},
 		},
 	}
 
 	for _, td := range testData {
 		id, createError := td.input.Create(db)
 		if createError != nil {
-			t.Error(createError)
-			return
+			t.Error(td.description + ": " + createError.Error())
+			break
 		}
 
 		if id == 0 {
 			t.Error("expected the returned ID to be non-zero")
+			break
 		}
 		if td.input.ID != id {
 			t.Error("expected the ID in the supplied object to be updated")
+			break
 		}
 
 		got, fetchError := db.GetMembershipSale(id)
 		if fetchError != nil {
 			t.Error(fetchError)
-			return
+			break
 		}
 
 		// The id has been set in the stored record.  Set the ID in
@@ -478,55 +739,115 @@ func TestMembershipSale(t *testing.T) {
 		td.want.ID = got.ID
 
 		if td.want != *got {
-			t.Errorf("want %v\ngot  %v", td.want, got)
+			t.Errorf("%s\nwant %v\ngot  %v", td.description, td.want, *got)
+			break
 		}
 
 		const wantPaymentID = "some very long text"
 		const wantPaymentStatus = "complete"
-		got.Update(db, wantPaymentStatus, wantPaymentID)
 
-		fetchedMS, fetchError := db.GetMembershipSale(got.ID)
+		updateError := got.Update(db, wantPaymentStatus, wantPaymentID)
+		if updateError != nil {
+			t.Errorf("%s: %v", td.description, updateError)
+			break
+		}
+
+		updatedMS, fetchError := db.GetMembershipSale(got.ID)
 		if fetchError != nil {
-			t.Error(fetchError)
-			return
+			t.Errorf("%s: %v", td.description, fetchError)
+			break
 		}
 
-		if wantPaymentID != fetchedMS.PaymentID {
-			t.Errorf("want id %s got %s", wantPaymentID, fetchedMS.PaymentID)
-			return
+		td.want.PaymentID = wantPaymentID
+		td.want.PaymentStatus = wantPaymentStatus
+
+		if td.want != *updatedMS {
+			t.Errorf("%s\nwant %v\ngot  %v", td.description, td.want, *updatedMS)
+			break
 		}
 
-		if wantPaymentStatus != fetchedMS.PaymentStatus {
-			t.Errorf("want id %s got %s", wantPaymentStatus, fetchedMS.PaymentStatus)
-			return
-		}
-
-		// Delete and check that it's deleted.
+		// Tidy up - delete the membershipsales record and check that it's deleted.
 
 		savedID := got.ID
 
 		deleteError := got.Delete(db)
 		if deleteError != nil {
 			t.Error(deleteError)
-			return
+			break
 		}
 
 		if got.ID != 0 {
-			t.Errorf("want id of deleted record to be 0, got %d", got.ID)
-			return
+			t.Errorf("%s: want id of deleted record to be 0, got %d", td.description, got.ID)
+			break
 		}
 
 		// This should fail and ms should be nil.
 		ms, expectedError := db.GetMembershipSale(savedID)
 
 		if expectedError == nil {
-			t.Error("expected an error")
+			t.Errorf("%s: expected an error", td.description)
+			break
 		}
 
 		if ms != nil {
-			t.Error("expected nil")
+			t.Errorf("%s: expected nil", td.description)
+			break
 		}
 
+	}
+}
+
+func TestMembershipSaleUpdateFailure(t *testing.T) {
+
+	const wantPaymentID = "some very long text"
+	const wantPaymentStatus = "complete"
+
+	db, connError := SetupDBForTesting("postgres")
+
+	if connError != nil {
+		t.Error(connError)
+		return
+	}
+
+	defer db.Close()
+
+	sale := MembershipSale{
+		ID: 0, PaymentService: "a", PaymentStatus: "b", PaymentID: "x",
+		MembershipYear: 2025, OrdinaryMemberID: TestUserIDPostgres,
+		OrdinaryMemberFee:      24.0,
+		OrdinaryMemberIsFriend: true, OrdinaryMemberFriendFee: 5,
+		DonationToSociety: 2, DonationToMuseum: 6.0, Giftaid: true,
+		AssociateMemberID: 0, AssociateMemberFee: 0.0,
+		AssocMemberIsFriend: false, AssociateMemberFriendFee: 0.0,
+	}
+
+	id, createError := sale.Create(db)
+	if createError != nil {
+		t.Error(createError)
+		return
+	}
+
+	if id == 0 {
+		t.Error("expected the returned ID to be non-zero")
+	}
+
+	// Set the Id to a non-existent record.
+	sale.ID++
+
+	// Expect the update to fail.
+	err := sale.Update(db, wantPaymentStatus, wantPaymentID)
+
+	if err == nil {
+		t.Error("expected an error")
+	}
+
+	// Tidy up.
+
+	sale.ID = id
+	deleteError := sale.Delete(db)
+	if deleteError != nil {
+		t.Error(deleteError)
+		return
 	}
 }
 
@@ -541,34 +862,29 @@ func checkMemberEndYear(db *Database, userID, targetYear int) error {
 	startingYear := targetYear - 1
 
 	db.SetMemberEndDate(userID, startingYear)
-	{
-		gotYear, err := db.GetMembershipYear(userID)
 
-		if err != nil {
-			return err
-		}
+	gotYear1, err1 := db.GetMembershipYear(userID)
 
-		if gotYear != startingYear {
-			em := fmt.Sprintf("setup - want starting year %d got %d", startingYear, gotYear)
-			return errors.New(em)
-		}
+	if err1 != nil {
+		return err1
+	}
 
+	if gotYear1 != startingYear {
+		em := fmt.Sprintf("setup - want starting year %d got %d", startingYear, gotYear1)
+		return errors.New(em)
 	}
 
 	// To test, set the year to the given year and check.
-
 	db.SetMemberEndDate(userID, targetYear)
-	{
-		gotYear, err := db.GetMembershipYear(userID)
+	gotYear2, err2 := db.GetMembershipYear(userID)
 
-		if err != nil {
-			return err
-		}
+	if err2 != nil {
+		return err2
+	}
 
-		if gotYear != targetYear {
-			em := fmt.Sprintf("want starting year %d got %d", startingYear, gotYear)
-			return errors.New(em)
-		}
+	if gotYear2 != targetYear {
+		em := fmt.Sprintf("want starting year %d got %d", startingYear, gotYear2)
+		return errors.New(em)
 	}
 
 	// Success!

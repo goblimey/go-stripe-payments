@@ -53,7 +53,7 @@ func (ms *MembershipSale) Create(db *Database) (int, error) {
 	if ms.AssociateMemberID > 0 {
 		// createStatement is the template to create a record in MembershipSales
 		// with a non-null ms_usr2_id (associate member).
-		// Initially the payment_id is an empty string.   It will be set to the
+		// Initially the payment_id may be an empty string.   It will be set to the
 		// Stripe transaction ID later.
 		const createStatement = `
 	INSERT INTO membership_sales (
@@ -73,9 +73,11 @@ func (ms *MembershipSale) Create(db *Database) (int, error) {
 		ms_donation,
 		ms_donation_museum,
 		ms_giftaid
-	) Values(
+	) 
+	Values
+	(
 	 	nextval('membership_sales_ms_id_seq'), 
-	 	$1, $2, '', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+	 	$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
 	)
 	RETURNING ms_id;
 	`
@@ -83,6 +85,7 @@ func (ms *MembershipSale) Create(db *Database) (int, error) {
 			createStatement,
 			ms.PaymentService,
 			ms.PaymentStatus,
+			ms.PaymentID,
 			ms.MembershipYear,
 			ms.OrdinaryMemberID,
 			ms.OrdinaryMemberFee,
@@ -99,11 +102,11 @@ func (ms *MembershipSale) Create(db *Database) (int, error) {
 	} else {
 		// createStatement is the template to create a record in MembershipSales
 		// with a null ms_usr2_id (no associate member).
-		// Initially the payment_id is an empty string.   It will be set to the
+		// Initially the payment_id may be an empty string.   It will be set to the
 		// Stripe transaction ID later.
 		const createStatement = `
 			INSERT INTO membership_sales (
-				ms_id, 
+				ms_id,
 				ms_payment_service,
 				ms_payment_status,
 				ms_payment_id,
@@ -112,23 +115,26 @@ func (ms *MembershipSale) Create(db *Database) (int, error) {
 				ms_usr1_fee,
 				ms_usr1_friend,
 				ms_usr1_friend_fee,
-				ms_usr2_id,
-				ms_usr2_fee,
-				ms_usr2_friend,
-				ms_usr2_friend_fee,
 				ms_donation,
 				ms_donation_museum,
-				ms.Giftaid
-				) Values(nextval('membership_sales_ms_id_seq'), 
-					$1, $2, '', $3, $4, $5, $6, $7, NULL, 0.0, false, 0.0, $8, $9, $10
-				)
-				RETURNING ms_id;
-			`
-		// The payment ID will be set to the Stripe transaction ID later.
+				ms_giftaid,
+				ms_usr2_fee,
+				ms_usr2_friend_fee,
+				ms_usr2_friend
+			) 
+			Values
+			(
+				nextval('membership_sales_ms_id_seq'), 
+				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 0.0, 0.0, 'f'
+			)
+			RETURNING ms_id;
+		`
+		// The payment ID may be an empty string, to be set later.
 		createError = db.QueryRow(
 			createStatement,
 			ms.PaymentService,
 			ms.PaymentStatus,
+			ms.PaymentID,
 			ms.MembershipYear,
 			ms.OrdinaryMemberID,
 			ms.OrdinaryMemberFee,
@@ -150,31 +156,35 @@ func (ms *MembershipSale) Create(db *Database) (int, error) {
 }
 
 // Update() updates a MembershipSale record in the database,
-// setting the payment status (nt null) and the payment Id (nullable).
-func (ms *MembershipSale) Update(db *Database, status, paymentID string) (int, error) {
+// setting the payment status (not null) and the payment Id (nullable).
+func (ms *MembershipSale) Update(db *Database, status, paymentID string) error {
 
 	sql := `
 		UPDATE MEMBERSHIP_SALES 
 		SET ms_payment_status=$1, ms_payment_id=$2
 		WHERE ms_id=$3
+		RETURNING ms_id;
 	`
 
-	result, execError := db.Exec(sql, status, paymentID, ms.ID)
-	if execError == nil {
-		return 0, execError
+	var returnedID int
+	execAndScanError := db.QueryRow(sql, status, paymentID, ms.ID).Scan(&returnedID)
+	if execAndScanError != nil {
+		return execAndScanError
 	}
 
-	rowsAffected, raError := result.RowsAffected()
-	if raError != nil {
-		return 0, raError
+	if returnedID == 0 {
+		em := fmt.Sprintf("MembershipSale.Update: zero return updating ID %d", ms.ID)
+		return errors.New(em)
 	}
-	if rowsAffected != 1 {
-		em := fmt.Sprintf("MembershipSale.Update: expected 1 row affected, got %d", rowsAffected)
-		return 0, errors.New(em)
+
+	if returnedID != ms.ID {
+		em := fmt.Sprintf(
+			"MembershipSale.update: updating ID %d, got ID %d  back", ms.ID, returnedID)
+		return errors.New(em)
 	}
 
 	// Success.
-	return ms.ID, nil
+	return nil
 }
 
 // Delete() deletes a MembershipSale record in the database,
@@ -360,6 +370,8 @@ func (db *Database) GetUserIDofMember(firstName, lastName, emailAddress string) 
 		return 0, searchErr
 	}
 
+	defer row.Close()
+
 	if !row.Next() {
 		return 0, errors.New("no matching member")
 	}
@@ -378,6 +390,7 @@ func (db *Database) GetMembershipYear(userID int) (int, error) {
 	var year int
 
 	if db.Type == "sqlite" {
+
 		// SQLite stores dates as string, int or float.  We use strings
 		// in the format "YYYY-MM-DD HH:MM:SS.SSS"
 		const sqlForSQLite = `
@@ -386,10 +399,10 @@ func (db *Database) GetMembershipYear(userID int) (int, error) {
 			LEFT JOIN adm_roles as r
 				ON r.rol_id = m.mem_rol_id
 				AND r.rol_name = 'Member'
-			WHERE m.mem_usr_id = $1
+			WHERE m.mem_usr_id = ?
 		`
 
-		getDateError := db.Connection.QueryRow(sqlForSQLite, userID).
+		getDateError := db.QueryRow(sqlForSQLite, userID).
 			Scan(&dateStr)
 
 		if getDateError != nil {
@@ -450,23 +463,22 @@ func (db *Database) SetMemberEndDate(userID int, year int) error {
 	// one per role (admin, member etc).  We need the one with
 	// role "Member".
 
-	const funcName = "SetMemberEndDate"
+	const funcName = "Database.SetMemberEndDate"
 
-	// This works for Postgres and sqlite.
 	const getMemberIDSQL = `
-		SELECT m.mem_id
-		FROM adm_members AS m
-		LEFT JOIN adm_users AS u 
-			ON m.mem_usr_id=u.usr_id
-		LEFT JOIN adm_roles as r
-			ON r.rol_id = m.mem_rol_id
-		WHERE r.rol_name = 'Member' 
-		AND u.usr_id = $1
+	SELECT m.mem_id
+	FROM adm_members AS m
+	LEFT JOIN adm_users AS u
+		ON m.mem_usr_id=u.usr_id
+	LEFT JOIN adm_roles as r
+		ON r.rol_id = m.mem_rol_id
+	WHERE r.rol_name = 'Member'
+	AND u.usr_id = $1;
 	`
 
 	// If everything is working properly we should only get exactly
 	// one result, the ID of the user's member record with role Member.
-	rows, getMemberIDError := db.Connection.Query(getMemberIDSQL, userID)
+	rows, getMemberIDError := db.Query(getMemberIDSQL, userID)
 
 	if getMemberIDError != nil {
 		if getMemberIDError == sql.ErrNoRows {
@@ -478,6 +490,8 @@ func (db *Database) SetMemberEndDate(userID int, year int) error {
 		return errors.New(em)
 	}
 
+	defer rows.Close()
+
 	// The user has a member record with 'Member' role.  Set the
 	// end date, for example "2024-12-31 23:59:59 999999 +00".
 	// That's the last microsecond of the last second of the year
@@ -487,61 +501,67 @@ func (db *Database) SetMemberEndDate(userID int, year int) error {
 	//
 	// If we get more than one record (which shouldn't happen) set
 	// the end date in all of them
+
+	ids := make([]int, 0)
 	for {
 		if !rows.Next() {
 			break
 		}
-		var memberID int
-		err := rows.Scan(&memberID)
+		var id int
+		err := rows.Scan(&id)
 		if err != nil {
-			return err
+			return errors.New(funcName + err.Error())
 		}
+		ids = append(ids, id)
+	}
 
-		var result sql.Result
+	endDate := fmt.Sprintf("%04d-12-31 23:59:59 999999 +00", year)
+
+	for _, id := range ids {
 		var setDateError error
+		var returnedID int
+		var updateSQL string
 
 		if db.Type == "sqlite" {
 
-			// Sqlite has no special date or timestamp format.  We store
+			// SQLite has no special date or timestamp format.  We store
 			// timestamps as strings in the format "YYYY-MM-DD HH:MM:SS.SSS".
-			dateStr := fmt.Sprintf("%04d-12-31 23:59:59.999", year)
-
-			const setYearEndSQLForSQLite = `
+			// It doesn't support rowsAffected, so we use RETURNING.
+			updateSQL = `
 				UPDATE adm_members
 				SET mem_end = ?
-				WHERE mem_id =?`
-
-			result, setDateError =
-				db.Connection.Exec(setYearEndSQLForSQLite, dateStr, memberID)
+				WHERE mem_id =?
+				RETURNING mem_id;
+			`
 
 		} else {
 
-			// Postgres has a format for timestamps and converter functions
-			// to turn a timestamp into a string and vice versa.
-			endDate := fmt.Sprintf("%d-12-31 23:59:59 999999 +00", year)
-			const setYearEndSQLForPostgres = `
+			// Postgres has a format for timestamps and a converter function
+			// to turn a string into a timestamp.  It doesn't support
+			// rowsAffected, so we use RETURNING.
+			updateSQL = `
 				UPDATE adm_members
 				SET mem_end = to_timestamp($1, 'YYYY-MM-DD HH24:MI:SS US TZH')
-				WHERE mem_id =$2`
-
-			result, setDateError =
-				db.Connection.Exec(setYearEndSQLForPostgres, endDate, memberID)
+				WHERE mem_id =$2
+				RETURNING mem_id;
+			`
 		}
+
+		setDateError = db.QueryRow(updateSQL, endDate, id).Scan(&returnedID)
 
 		if setDateError != nil {
-			em := fmt.Sprintf("%s %v", funcName, setDateError)
+			em := fmt.Sprintf("%s: %v", funcName, setDateError)
 			return errors.New(em)
 		}
 
-		rowsAffected, rowsAffectedError := result.RowsAffected()
-		if rowsAffectedError != nil {
-			em := fmt.Sprintf("%s %v", funcName, rowsAffectedError)
+		if returnedID == 0 {
+			em := fmt.Sprintf("%s: ID zero returned updating ID %d", funcName, id)
 			return errors.New(em)
 		}
 
-		if rowsAffected < 1 {
-			em := fmt.Sprintf("%s: no rows updated for userID %d",
-				funcName, userID)
+		if returnedID != id {
+			em := fmt.Sprintf("%s: updating ID %d, got ID %d  back",
+				funcName, id, returnedID)
 			return errors.New(em)
 		}
 	}
@@ -580,7 +600,7 @@ func (db *Database) SetDonationToMuseum(userID int, payment float64) error {
 	return db.SetUserDataFloatField(fieldID, userID, payment)
 }
 
-// SetDateLastPaid sets the dat last paid field in adm_user_data.
+// SetDateLastPaid sets the date last paid field in adm_user_data.
 func (db *Database) SetDateLastPaid(userID int, d time.Time) error {
 
 	fieldID, fieldError := db.getFieldIDOnce("DATE_LAST_PAID", &db.dateLastPaidID)
@@ -608,7 +628,7 @@ func (db *Database) SetFriendField(userID int, ticked bool) error {
 }
 
 // SetGiftaidField sets the giftaid field for the user in
-// adm_user_data.  Tick box fields are set to 0 or 1.
+// adm_user_data.  In the DB, tick box fields are set to 0 or 1.
 func (db *Database) SetGiftaidField(userID int, ticked bool) error {
 	fieldID, fieldError := db.getGiftaidID()
 	if fieldError != nil {
@@ -620,23 +640,28 @@ func (db *Database) SetGiftaidField(userID int, ticked bool) error {
 	} else {
 		return db.SetUserDataIntField(fieldID, userID, 0)
 	}
-
 }
 
-// SetAssocFriendField sets the friend of the museum field for the user
-// in adm_user_data.  Tick box fields are set to 0 or 1.
-func (db *Database) SetAssocFriendField(userID int, ticked bool) error {
-	fieldID, fieldError := db.getAssocFriendID()
+// GetGiftaidField gets the giftaid field for the user from
+// adm_user_data.  In the DB, Tick box fields are set to 0 or 1.
+func (db *Database) GetGiftaidField(userID int) (bool, error) {
+	fieldID, fieldError := db.getGiftaidID()
 	if fieldError != nil {
-		return fieldError
+		em := fmt.Sprintf("GetGiftaidField: %v", fieldError)
+		return false, errors.New(em)
 	}
 
-	if ticked {
-		return db.SetUserDataIntField(fieldID, userID, 1)
+	fetchedValue, fetchError := db.GetUserDataIntField(fieldID, userID)
+	if fetchError != nil {
+		return false, fetchError
+	}
+
+	// 0 is false, any other value is true
+	if fetchedValue == 0 {
+		return false, nil
 	} else {
-		return db.SetUserDataIntField(fieldID, userID, 0)
+		return true, nil
 	}
-
 }
 
 // SetMembersAtAddress sets the number of members at the user's address in
@@ -664,43 +689,45 @@ func (db *Database) SetFriendsAtAddress(userID int, members int) error {
 // float64 value.  If a record for the field is missing, one is created.
 func (db *Database) SetUserDataFloatField(fieldID, userID int, floatValue float64) error {
 
-	var result sql.Result
+	f := "SetUserDataFloatField"
+	var returnedID int
+	var sqlCommand string
 
 	if db.FieldSet(fieldID, userID) {
 
 		// There is already a record for this field.  Update the value.
-		const sqlUpdate = `
+		sqlCommand = `
 			UPDATE adm_user_data
 			SET usd_value = $1
 			WHERE usd_usr_id = $2
-			AND usd_usf_id = $3;
-	`
-		var execError error
-		result, execError = db.Exec(sqlUpdate, floatValue, userID, fieldID)
-		if execError == nil {
-			return execError
-		}
-
+			AND usd_usf_id = $3
+			RETURNING usd_id;;
+		`
 	} else {
 
 		// There is no record for that field.  Create one.
-		const sqlInsert = `
-			INSERT INTO adm_user_data(usd_id, usd_usr_id, usd_usf_id, usd_value)
-			VALUES (nextval('public.adm_user_data_usd_id_seq'), $1, $2, $3);
-		`
-		var execError error
-		result, execError = db.Exec(sqlInsert, userID, fieldID, floatValue)
-		if execError == nil {
-			return execError
+		if db.Type == "sqlite" {
+			sqlCommand = `
+				INSERT INTO adm_user_data(usd_value, usd_usr_id, usd_usf_id)
+				VALUES ($1, $2, $3)
+				RETURNING usd_id;
+			`
+		} else {
+			sqlCommand = `
+				INSERT INTO adm_user_data(usd_id, usd_usr_id, usd_usf_id, usd_value)
+				VALUES (nextval('public.adm_user_data_usd_id_seq'), $1, $2, $3)
+				RETURNING usd_id;
+			`
 		}
 	}
 
-	rowsAffected, raError := result.RowsAffected()
-	if raError != nil {
-		return raError
+	execAndScanError := db.QueryRow(sqlCommand, floatValue, userID, fieldID).Scan(&returnedID)
+	if execAndScanError != nil {
+		return execAndScanError
 	}
-	if rowsAffected != 1 {
-		em := fmt.Sprintf("SetLastPayment: insert expected 1 row affected, got %d", rowsAffected)
+
+	if returnedID == 0 {
+		em := fmt.Sprintf("MembershipSale.%s: zero return updating ID %d", f, returnedID)
 		return errors.New(em)
 	}
 
@@ -712,109 +739,145 @@ func (db *Database) SetUserDataFloatField(fieldID, userID int, floatValue float6
 // for the field is missing, one is created.
 func (db *Database) SetUserDataIntField(fieldID, userID int, intValue int) error {
 
-	var result sql.Result
+	f := "SetUserDataIntField"
+
+	var returnedID int
+	var sqlCommand string
 
 	if db.FieldSet(fieldID, userID) {
 		// There is already a record for this field.  Update the value.
-		const sqlUpdate = `
+		sqlCommand = `
 			UPDATE adm_user_data
 			SET usd_value = $1
 			WHERE usd_usr_id = $2
-			AND usd_usf_id = $3;
+			AND usd_usf_id = $3
+			RETURNING usd_id;
 		`
-		var execError error
-		result, execError = db.Exec(sqlUpdate, intValue, userID, fieldID)
-		if execError == nil {
-			return execError
-		}
 	} else {
 
 		// There is no record for that field.  Create one.
-		const sqlInsert = `
-			INSERT INTO adm_user_data(usd_id, usd_usr_id, usd_usf_id, usd_value)
-			VALUES (nextval('public.adm_user_data_usd_id_seq'), $1, $2, $3);
-		`
-		var execError error
-		result, execError = db.Exec(sqlInsert, userID, fieldID, intValue)
-		if execError == nil {
-			return execError
+
+		if db.Type == "sqlite" {
+
+			sqlCommand = `
+				INSERT INTO adm_user_data(usd_value, usd_usr_id, usd_usf_id)
+				VALUES ($1, $2, $3)
+				RETURNING usd_id;
+			`
+
+		} else {
+
+			sqlCommand = `
+				INSERT INTO adm_user_data(usd_id, usd_value, usd_usr_id, usd_usf_id)
+				VALUES (nextval('public.adm_user_data_usd_id_seq'), $1, $2, $3)
+				RETURNING usd_id;
+			`
 		}
 	}
 
-	rowsAffected, raError := result.RowsAffected()
-	if raError != nil {
-		return raError
+	execAndScanError := db.QueryRow(sqlCommand, intValue, userID, fieldID).Scan(&returnedID)
+	if execAndScanError != nil {
+		return execAndScanError
 	}
-	if rowsAffected != 1 {
-		em := fmt.Sprintf("SetLastPayment: insert expected 1 row affected, got %d", rowsAffected)
+
+	if returnedID == 0 {
+		em := fmt.Sprintf("MembershipSale.%s: zero return updating ID %d", f, returnedID)
 		return errors.New(em)
 	}
 
 	return nil
 }
 
+// GetUserDataIntField gets the int value from the field with ID fieldID from
+// adm_user_data.  (This includes tick boxes, which are set to 0 or 1.)  If
+// a record for the user is not present, an error is returned.
+func (db *Database) GetUserDataIntField(fieldID, userID int) (int, error) {
+
+	f := "getUserDataIntField"
+
+	const sqlCommand = `
+		SELECT usd_value
+		FROM adm_user_data
+		WHERE usd_usr_id = $1
+		AND usd_usf_id = $2;
+	`
+
+	var fetchedValue int
+	queryAndScanError := db.QueryRow(sqlCommand, userID, fieldID).Scan(&fetchedValue)
+	if queryAndScanError != nil {
+		em := fmt.Sprintf("%s: %v", f, queryAndScanError)
+		return 0, errors.New(em)
+	}
+
+	return fetchedValue, nil
+}
+
 // SetTimeFieldInUserData sets the field with ID fieldID in adm_user_data to an
 // time value.
 func (db *Database) SetTimeFieldInUserData(fieldID, userID int, t time.Time) error {
 
-	// Postgres uses to_timestamp() to set the time from a string.
-	const sqlUpdatePostgres = `
-		UPDATE adm_user_data
-		SET usd_value = to_timestamp($1, 'YYYY-MM-DD')
-		WHERE usd_usr_id = $2
-		AND usd_usf_id = $3;
-	`
-	const sqlInsertPostgres = `
-		INSERT INTO adm_user_data(usd_usr_id, usd_usf_id, usd_value)
-		VALUES ($1, $2, to_timestamp($3, 'YYYY-MM-DD'));
-	`
-	const sqlUpdateSQLite = `
-		UPDATE adm_user_data
-		SET usd_value = ?
-		WHERE usd_usr_id = ?
-		AND usd_usf_id = ?;
-	`
-	const sqlInsertSQLite = `
-		INSERT INTO adm_user_data(usd_usr_id, usd_usf_id, usd_value)
-		VALUES (?, ?, ?,);
-	`
+	f := "SetTimeFieldInUserData"
 
-	var sqlUpdate string
-	var sqlInsert string
-	if db.Type == "postgres" {
-		sqlUpdate = sqlUpdatePostgres
-		sqlInsert = sqlInsertPostgres
-	} else {
-		sqlUpdate = sqlUpdateSQLite
-		sqlInsert = sqlInsertSQLite
-	}
-
-	var sqlResult sql.Result
-	timeStr := t.Format("2006-01-02")
+	// Neither Postgres nor SQLite support rowsAffected.  Use RETURNING.
+	var sqlCommand string
 
 	if db.FieldSet(fieldID, userID) {
-		// There is already a record for this field.  Update the value.
-		var execError error
-		sqlResult, execError = db.Exec(sqlUpdate, timeStr, userID, fieldID)
-		if execError != nil {
-			return execError
+		// There is already a record for this field.  Update it.
+		if db.Type == "postgres" {
+			// Postgres uses to_timestamp() to set the timestamp from a string.
+			sqlCommand = `
+			UPDATE adm_user_data
+			SET usd_value = to_timestamp($1, 'YYYY-MM-DD HH24:MI:SS')
+			WHERE usd_usr_id = $2
+			AND usd_usf_id = $3
+			RETURNING usd_usr_id;
+		`
+		} else {
+			sqlCommand = `
+			UPDATE adm_user_data
+			SET usd_value = ?
+			WHERE usd_usr_id = ?
+			AND usd_usf_id = ?
+			RETURNING usd_usr_id;
+		`
 		}
 	} else {
 
-		// There is no record for that field.  Create one.
-		var execError error
-		sqlResult, execError = db.Exec(sqlInsert, userID, fieldID, timeStr)
-		if execError != nil {
-			return execError
+		// There is no record for this field.  Create and set it.
+		if db.Type == "postgres" {
+			sqlCommand = `
+			INSERT INTO adm_user_data(usd_value, usd_usr_id, usd_usf_id)
+			VALUES (to_timestamp($1, 'YYYY-MM-DD HH24:MI:SS+HH'), $2, $3)
+			RETURNING usd_usr_id;
+		`
+		} else {
+			sqlCommand = `
+			INSERT INTO adm_user_data(usd_value, usd_usr_id, usd_usf_id)
+			VALUES (?, ?, ?)
+			RETURNING usd_usr_id;
+		`
 		}
 	}
 
-	rowsAffected, raError := sqlResult.RowsAffected()
-	if raError != nil {
-		return raError
+	var execAndScanError error
+	var returnedID int
+
+	timeStr := t.Format("2006-01-02 15:04:05")
+
+	execAndScanError = db.QueryRow(sqlCommand, timeStr, userID, fieldID).Scan(&returnedID)
+	if execAndScanError != nil {
+		em := fmt.Sprintf("%s: %v", f, execAndScanError)
+		return errors.New(em)
 	}
-	if rowsAffected != 1 {
-		em := fmt.Sprintf("SetTimeFieldInUserData: expected 1 row affected, got %d", rowsAffected)
+
+	if returnedID == 0 {
+		em := fmt.Sprintf("%s: ID zero returned updating ID %d", f, userID)
+		return errors.New(em)
+	}
+
+	if returnedID != userID {
+		em := fmt.Sprintf("%s: updating ID %d, got ID %d  back",
+			f, userID, returnedID)
 		return errors.New(em)
 	}
 
@@ -833,6 +896,8 @@ func (db *Database) FieldSet(fieldID, userID int) bool {
 	if selectError != nil {
 		return false
 	}
+
+	defer rows.Close()
 
 	if rows.Next() {
 		// The field is set.
@@ -1050,45 +1115,4 @@ func (db *Database) getFieldID(name string) (int, error) {
 		return 0, scanError
 	}
 	return id, nil
-}
-
-func createMembershipSalesRecord() {
-	// Create a membership_sales row:
-
-	// ms_id integer NOT NULL,
-	// ms_membership_year integer NOT NULL,
-	// ms_usr1_id integer NOT NULL,
-	// ms_usr1_friend boolean NOT NULL,
-	// ms_usr2_id integer,
-	// ms_usr2_friend boolean,
-	// ms_payment_service CHARACTER VARYING(36) NOT NULL,
-	// ms_payment_id CHARACTER VARYING(200) NOT NULL,
-	// ms_usr1_fee REAL NOT NULL,
-	// ms_usr2_fee REAL,
-	// ms_usr1_friend_fee REAL,
-	// ms_usr2_friend_fee REAL,
-	// ms_donation REAL,
-	// ms_donation_museum REAL,
-}
-
-func a() {
-	const sql = `SELECT users.usr_id as id
-        FROM adm_users as users
-        LEFT JOIN adm_members as members
-        ON users.usr_id = members.mem_usr_id
-        AND members.mem_begin <= NOW()
-        AND members.mem_end >= NOW()
-        INNER JOIN adm_roles as roles
-			ON roles.rol_id = members.mem_rol_id
-			AND roles.rol_name = 'Member'
-		LEFT JOIN adm_user_data AS email
-			ON email.usd_usr_id = users.usr_id
-			AND email.usd_usf_id = $1
-		LEFT JOIN adm_user_data AS permission
-			ON permission.usd_usr_id = users.usr_id
-			AND permission.usd_usf_id = $2
-		WHERE email.usd_value IS NOT NULL
-			AND permission.usd_value IS NULL
-		ORDER BY users.usr_id
-		`
 }

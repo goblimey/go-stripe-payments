@@ -4,6 +4,8 @@
 -- Name: membership_sales; Type: TABLE; Schema: public; Owner: postgres
 --
 
+IF 
+
 CREATE TABLE public.membership_sales
 (
     ms_id integer NOT NULL,
@@ -17,7 +19,7 @@ CREATE TABLE public.membership_sales
     -- 0.0 if not a friend.
     ms_usr1_friend_fee REAL NOT NULL default 0.0,
     -- 0 if no associate
-    ms_usr2_id integer DEFAULT 0,
+    ms_usr2_id integer DEFAULT NULL,
     -- 0.0 if no associate
     ms_usr2_fee REAL NOT NULL default 0.0,
     -- false if no associate.
@@ -28,7 +30,7 @@ CREATE TABLE public.membership_sales
     ms_donation REAL NOT NULL DEFAULT 0.0,
     -- 0.0 if no donation to museum.
     ms_donation_museum REAL NOT NULL DEFAULT 0.0,
-    ms_gift_aid boolean NOT NULL DEFAULT false,
+    ms_giftaid boolean NOT NULL DEFAULT false,
     timestamp_create timestamp
     without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP 
 );

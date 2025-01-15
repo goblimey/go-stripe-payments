@@ -426,7 +426,6 @@ func (hdlr *Handler) Success(w http.ResponseWriter, r *http.Request) {
 
 	hdlr.successHelper(stripeSession.ClientReferenceID, sessionID, w, db)
 
-	// successHelper never returns.
 }
 
 // successHelper completes the sale.  It's separated out to support
@@ -560,25 +559,20 @@ func (hdlr *Handler) successHelper(salesIDstr, sessionID string, w http.Response
 		reportError(w, fmError)
 	}
 
-	// Update the full member's friend tick box.
-	friendError := db.SetFriendTickBox(ms.OrdinaryMemberID, ms.OrdinaryMemberIsFriend)
-	if friendError != nil {
-		fmt.Printf("successHelper: error setting friend value for %d - %v",
-			ms.OrdinaryMemberID, friendError)
-		reportError(w, fmError)
-	}
-
 	if ms.AssociateMemberID > 0 {
-		friendError := db.SetFriendTickBox(ms.AssociateMemberID, ms.AssocMemberIsFriend)
-		if friendError != nil {
+		assocFriendError := db.SetFriendField(ms.AssociateMemberID, ms.AssocMemberIsFriend)
+		if assocFriendError != nil {
 			fmt.Printf("successHelper: error setting friend value for %d - %v",
-				ms.AssociateMemberID, friendError)
+				ms.AssociateMemberID, assocFriendError)
 			reportError(w, fmError)
 		}
 	}
 
 	// Update the membership sale record.
-	ms.Update(db, "complete", sessionID)
+	updateError := ms.Update(db, "complete", sessionID)
+	if updateError != nil {
+		log.Printf("successHelper: failed to update membershipsales record %d", ms.ID)
+	}
 
 	// Create the response page.
 
@@ -1217,7 +1211,7 @@ const paymentPageTemplateStr = `
 const paymentConfirmationPageTemplateStr = `
 <html>
     <head><title>payment confirmation</title></head>
-	<body style='font-size: 100%'>
+	<body style='font-size: 100%%'>
 		<h2>Leatherhead & District Local History Society</h2>
 		<h3>Membership Renewal {{.MembershipYear}}</h3>
 		<p>
@@ -1238,7 +1232,7 @@ const paymentConfirmationPageTemplateStr = `
 const successPageTemplateStr = `
 <html>
 	<head><title>Payment Successful</title></head>
-    <body style='font-size: 100%'>
+    <body style='font-size: 100%%'>
         <h1>Thank you</h1>
 		<p>
 			Your membership has been renewed until the end of {{.MembershipYear}}.

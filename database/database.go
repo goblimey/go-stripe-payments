@@ -10,8 +10,11 @@ import (
 
 	// Database drivers.
 	_ "github.com/lib/pq"
-	_ "modernc.org/sqlite"
-	// "github.com/mattn/go-sqlite3"
+
+	// _ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
+
+	"github.com/goblimey/go-tools/testsupport"
 )
 
 type DBConfig struct {
@@ -43,21 +46,21 @@ func (dbc *DBConfig) String() string {
 }
 
 type Database struct {
-	Type       string   // The type of database - "postgres", "sqlite" etc.
-	Config     DBConfig // The database config.
-	Connection *sql.DB  // The database connection.
-	// ID of the adm_user_fields table, created once and reused.
-	firstNameID         int // ID of the First Name field
-	lastNameID          int // ID of the Last Name field
-	emailID             int // ID of the email address field
-	friendID            int // ID of the friend field
-	giftaidID           int // ID of the giftaid field
-	lastPaymentID       int // ID of the last payment field
-	donationToSocietyID int // ID of the donation to society field
-	donationToMuseumID  int // ID of the donation to museum field
-	membersAtAddressID  int // ID of the members at this address field
-	friendsAtAddressID  int // ID of the number of friends at this address field
-	dateLastPaidID      int // ID of the number of friends at this address field
+	Type                string   // The type of database - "postgres", "sqlite" etc.
+	Config              DBConfig // The database config.
+	Connection          *sql.DB  // The database connection.
+	SQLiteTempDir       string   // The directory in /tmp used to store the SQLite DB.
+	firstNameID         int      // ID of the First Name field
+	lastNameID          int      // ID of the Last Name field
+	emailID             int      // ID of the email address field
+	friendID            int      // ID of the friend field
+	giftaidID           int      // ID of the giftaid field
+	lastPaymentID       int      // ID of the last payment field
+	donationToSocietyID int      // ID of the donation to society field
+	donationToMuseumID  int      // ID of the donation to museum field
+	membersAtAddressID  int      // ID of the members at this address field
+	friendsAtAddressID  int      // ID of the number of friends at this address field
+	dateLastPaidID      int      // ID of the number of friends at this address field
 }
 
 func New(dbConfig DBConfig) *Database {
@@ -85,10 +88,25 @@ func (db *Database) Connect() error {
 		return nil
 
 	case "sqlite":
-		var err error
-		db.Connection, err = ConnectToSQLite()
-		if err != nil {
-			return err
+
+		// Create a working directory.  Close() removes it.
+		var wdErr error
+		db.SQLiteTempDir, wdErr = testsupport.CreateWorkingDirectory()
+		if wdErr != nil {
+			return wdErr
+		}
+
+		// Attempts to use an in-memory database produced random failures
+		// due to the database being closed and cleared down prematurely
+		// after various queries had run.  Instead we use file databases
+		// in /tmp.
+
+		connectionDetails := "file:" + db.SQLiteTempDir + "/sqlite3.db"
+
+		var connErr error
+		db.Connection, connErr = ConnectToSQLite(connectionDetails)
+		if connErr != nil {
+			return connErr
 		}
 		db.Type = db.Config.Type
 		return nil
@@ -99,8 +117,15 @@ func (db *Database) Connect() error {
 
 // Close closes the database connection.
 func (db *Database) Close() error {
-	err := db.Connection.Close()
-	return err
+
+	closeError := db.Connection.Close()
+
+	if db.Type == "sqlite" {
+		// Whether the close worked or not, we must remove the DB file.
+		testsupport.RemoveWorkingDirectory(db.SQLiteTempDir)
+	}
+
+	return closeError
 }
 
 // QueryRow executes a query that is expected to return at most one row.
@@ -111,9 +136,16 @@ func (db *Database) Query(query string, args ...any) (*sql.Rows, error) {
 	if db.Type == "sqlite" {
 		query = postgresParamsToSQLiteParams(query)
 	}
+	if db.Type == "sqlite" {
+		tables := db.ListSQLiteTables()
+		_ = tables
+	}
 
 	row, err := db.Connection.Query(query, args...)
-
+	if db.Type == "sqlite" {
+		tables := db.ListSQLiteTables()
+		_ = tables
+	}
 	return row, err
 }
 
@@ -148,6 +180,45 @@ func (db *Database) Exec(query string, args ...any) (sql.Result, error) {
 	return result, nil
 }
 
+// ListSQLiteTables returns a list of the SQLite tables.
+// (Used for debugging.)
+func (db *Database) ListSQLiteTables() []string {
+
+	result := make([]string, 1)
+	if db.Type != "sqlite" {
+		result := append(result, "not implemented for DB "+db.Type)
+		return result
+	}
+
+	// SQLite stores dates as string, int or float.  We use strings
+	// in the format "YYYY-MM-DD HH:MM:SS.SSS"
+	const sql = `SELECT name FROM sqlite_master WHERE type='table'`
+
+	// Use the connection in case we want to call this from Query.
+	rows, getNamesError := db.Connection.Query(sql)
+
+	if getNamesError != nil {
+		result = append(result, getNamesError.Error())
+		return result
+	}
+
+	for {
+		if !rows.Next() {
+			break
+		}
+		var table string
+		err := rows.Scan(&table)
+		if err != nil {
+			result = append(result, err.Error())
+			return result
+		}
+
+		result = append(result, table)
+	}
+
+	return result
+}
+
 // ConnectToPostgres connects to the database specified in the Database object.
 func ConnectToPostgres(dbConfig *DBConfig) (*sql.DB, error) {
 
@@ -180,14 +251,12 @@ func ConnectToPostgres(dbConfig *DBConfig) (*sql.DB, error) {
 }
 
 // Connect connects to the database.
-func ConnectToSQLite() (*sql.DB, error) {
+func ConnectToSQLite(connectionDetails string) (*sql.DB, error) {
 
-	// At present we only use in-memory sqlite databases.  If we
-	// ever use a database on disk, this part may need reworking.
+	// If you use the "modernc.org/sqlite" driver, open as follows:
+	// conn, err := sql.Open("sqlite", connectionDetails)
 
-	connectionDetails := ":memory:"
-
-	conn, err := sql.Open("sqlite", connectionDetails)
+	conn, err := sql.Open("sqlite3", connectionDetails)
 	if err != nil {
 		return nil, err
 	}
