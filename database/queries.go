@@ -630,14 +630,21 @@ func (db *Database) SetFriendField(userID int, ticked bool) error {
 // SetGiftaidField sets the giftaid field for the user in
 // adm_user_data.  In the DB, tick box fields are set to 0 or 1.
 func (db *Database) SetGiftaidField(userID int, ticked bool) error {
+
+	f := "SetGiftaidField"
+
 	fieldID, fieldError := db.getGiftaidID()
 	if fieldError != nil {
 		return fieldError
 	}
-
+	// If the member consents to giftaid, fill in the box.  In case
+	// it's already set from last year but not this year, ensure that
+	// the value in the DB record is reset.
 	if ticked {
+		fmt.Printf("%s: setting giftaid to true for user %d\n", f, userID)
 		return db.SetUserDataIntField(fieldID, userID, 1)
 	} else {
+		fmt.Printf("%s: setting giftaid to false for user  %d\n", f, userID)
 		return db.SetUserDataIntField(fieldID, userID, 0)
 	}
 }
@@ -1046,18 +1053,11 @@ func (db *Database) getFriendID() (int, error) {
 // getGiftaidID gets the ID of the giftaid field in adm_user_fields.
 func (db *Database) getGiftaidID() (int, error) {
 	const fieldName = "GIFT_AID"
-	if db.giftaidID != 0 {
-		return db.giftaidID, nil
-	}
 
-	// This is the first call so we need to look up the ID.
 	fieldID, fetchError := db.getFieldID(fieldName)
 	if fetchError != nil {
 		return 0, errors.New("getGiftaidID: " + fetchError.Error())
 	}
-
-	// Set the global ID so that we don't have to look up again.
-	db.giftaidID = fieldID
 
 	return fieldID, nil
 }
@@ -1099,20 +1099,11 @@ func (db *Database) getFieldID(name string) (int, error) {
 
 	const sql = `SELECT usf_id from adm_user_fields where usf_name_intern = $1`
 
-	result, queryError := db.Query(sql, name)
-	if queryError != nil {
-		return 0, queryError
-	}
-
-	defer result.Close()
-
-	if !result.Next() {
-		return 0, errors.New("getFieldID: " + name + " not found")
-	}
 	var id int
-	scanError := result.Scan(&id)
+	scanError := db.QueryRow(sql, name).Scan(&id)
 	if scanError != nil {
 		return 0, scanError
 	}
+
 	return id, nil
 }

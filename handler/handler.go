@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -450,20 +451,36 @@ func (hdlr *Handler) successHelper(salesIDstr, sessionID string, w http.Response
 	// The userID of the full member and maybe their associate
 	// member is in the sales record.
 
-	// Set the end date of the full member.
+	// Set the end date of the full member.  This is the most
+	// important change.  If it fails, warn the user.
 	fmError := db.SetMemberEndDate(ms.OrdinaryMemberID, ms.MembershipYear)
 	if fmError != nil {
 		fmt.Println("successHelper: ", fmError.Error())
-		reportError(w, fmError)
+		email := "treasurer@leatherheadhistory.org"
+		em := "Something went wrong.  Please contact " + email
+		reportError(w, errors.New(em))
 	}
 
+	// Any errors after this point are less important.  Log them
+	// but don't show the user an error message.
+
+	// Set the giftaid tick box, true or false.  The box may
+	// already be set from last year and this year it may be
+	// set differently, so don't just set it if the given
+	// value is true.
+	giftAidErr := db.SetGiftaidField(ms.OrdinaryMemberID, ms.Giftaid)
+	if giftAidErr != nil {
+		fmt.Println("successHelper: ", giftAidErr.Error())
+	}
+
+	// Set date last paid.
 	now := time.Now()
 	dlpError := db.SetDateLastPaid(ms.OrdinaryMemberID, now)
 	if dlpError != nil {
 		fmt.Println("successHelper: ", dlpError.Error())
-		reportError(w, dlpError)
 	}
 
+	// Set members at address - 2 if there is an associate, otherwise 1.
 	membersAtAddress := 1
 	var friendsAtAddress int
 
@@ -477,16 +494,6 @@ func (hdlr *Handler) successHelper(salesIDstr, sessionID string, w http.Response
 	friendError := db.SetFriendField(ms.OrdinaryMemberID, ms.OrdinaryMemberIsFriend)
 	if friendError != nil {
 		fmt.Println("successHelper: friend ", friendError.Error())
-		reportError(w, friendError)
-	}
-
-	// If the member consents to giftaid, tick the box.  In case it's
-	// already set from last year but not this year, ensure that the
-	// value in the DB record is reset.
-	giftaidError := db.SetGiftaidField(ms.OrdinaryMemberID, ms.Giftaid)
-	if giftaidError != nil {
-		fmt.Println("successHelper: friend ", giftaidError.Error())
-		reportError(w, giftaidError)
 	}
 
 	if ms.AssociateMemberID > 0 {
@@ -495,14 +502,12 @@ func (hdlr *Handler) successHelper(salesIDstr, sessionID string, w http.Response
 		err := db.SetFriendField(ms.AssociateMemberID, ms.AssocMemberIsFriend)
 		if err != nil {
 			fmt.Println("successHelper: associate friend", err.Error())
-			reportError(w, err)
 		}
 
 		// Set the end date of the associate member.
 		setError := db.SetMemberEndDate(ms.AssociateMemberID, ms.MembershipYear)
 		if setError != nil {
 			fmt.Println("successHelper: ", setError.Error())
-			reportError(w, setError)
 		}
 
 		membersAtAddress++
@@ -513,26 +518,22 @@ func (hdlr *Handler) successHelper(salesIDstr, sessionID string, w http.Response
 		setMembersError := db.SetMembersAtAddress(ms.AssociateMemberID, membersAtAddress)
 		if setMembersError != nil {
 			fmt.Println("successHelper: ", setMembersError.Error())
-			reportError(w, setMembersError)
 		}
 
 		setFriendsError := db.SetFriendsAtAddress(ms.AssociateMemberID, friendsAtAddress)
 		if setFriendsError != nil {
 			fmt.Println("successHelper: ", setFriendsError.Error())
-			reportError(w, setFriendsError)
 		}
 	}
 
 	setMembersError := db.SetMembersAtAddress(ms.OrdinaryMemberID, membersAtAddress)
 	if setMembersError != nil {
 		fmt.Println("successHelper: members ", setMembersError.Error())
-		reportError(w, setMembersError)
 	}
 
 	setFriendsError := db.SetFriendsAtAddress(ms.OrdinaryMemberID, friendsAtAddress)
 	if setFriendsError != nil {
 		fmt.Println("successHelper: friends ", setFriendsError.Error())
-		reportError(w, setFriendsError)
 	}
 
 	// Update the last payment.
@@ -540,7 +541,6 @@ func (hdlr *Handler) successHelper(salesIDstr, sessionID string, w http.Response
 	if paymentError != nil {
 		fmt.Printf("successHelper: error setting last payment for %d - %v",
 			ms.OrdinaryMemberID, paymentError)
-		reportError(w, fmError)
 	}
 
 	// Update the user's donation to society.
@@ -548,7 +548,6 @@ func (hdlr *Handler) successHelper(salesIDstr, sessionID string, w http.Response
 	if dsError != nil {
 		fmt.Printf("successHelper: error setting donation to society for %d - %v",
 			ms.OrdinaryMemberID, dsError)
-		reportError(w, fmError)
 	}
 
 	// Update the user's donation to museum.
@@ -556,7 +555,6 @@ func (hdlr *Handler) successHelper(salesIDstr, sessionID string, w http.Response
 	if dmError != nil {
 		fmt.Printf("successHelper: error setting donation to museum for %d - %v",
 			ms.OrdinaryMemberID, dmError)
-		reportError(w, fmError)
 	}
 
 	if ms.AssociateMemberID > 0 {
@@ -564,7 +562,6 @@ func (hdlr *Handler) successHelper(salesIDstr, sessionID string, w http.Response
 		if assocFriendError != nil {
 			fmt.Printf("successHelper: error setting friend value for %d - %v",
 				ms.AssociateMemberID, assocFriendError)
-			reportError(w, fmError)
 		}
 	}
 

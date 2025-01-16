@@ -54,7 +54,6 @@ type Database struct {
 	lastNameID          int      // ID of the Last Name field
 	emailID             int      // ID of the email address field
 	friendID            int      // ID of the friend field
-	giftaidID           int      // ID of the giftaid field
 	lastPaymentID       int      // ID of the last payment field
 	donationToSocietyID int      // ID of the donation to society field
 	donationToMuseumID  int      // ID of the donation to museum field
