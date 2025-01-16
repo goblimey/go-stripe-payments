@@ -612,6 +612,7 @@ func (hdlr *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 	form.AssocFriendStr = r.PostFormValue("assoc_friend")
 	form.DonationToSocietyStr = r.PostFormValue("donation_to_society")
 	form.DonationToMuseumStr = r.PostFormValue("donation_to_museum")
+	form.GiftaidStr = r.PostFormValue("giftaid")
 
 	if len(userIDParam) == 0 {
 		// Somebody has bypassed the form that we gave them.
