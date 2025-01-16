@@ -94,7 +94,10 @@ func NewPaymentForm(ordinaryMembershipFeeStr, associateMembershipFeeStr, friendM
 // and the given payment year.  Factored out to support unit testing.
 func createPaymentForm(
 	paymentYear int,
-	ordinaryMembershipFeeStr, associateMembershipFeeStr, friendMembershipFeeStr string) *PaymentFormData {
+	ordinaryMembershipFeeStr,
+	associateMembershipFeeStr,
+	friendMembershipFeeStr string,
+) *PaymentFormData {
 
 	f := PaymentFormData{
 		PaymentYear:           paymentYear,
@@ -618,7 +621,6 @@ func (hdlr *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var userID, assocUserID int
-	var friend, assocFriend bool
 	var friendFee, assocFee, assocFriendFee float64
 
 	_, userErr := fmt.Sscanf(userIDParam, "%d", &userID)
@@ -641,14 +643,21 @@ func (hdlr *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(form.FriendStr) > 0 {
-		friend = true
-		friendFee = hdlr.FriendMembershipFee
-		//  += friendMembership
+		form.Friend = getTickBox(form.FriendStr)
+		if form.Friend {
+			friendFee = hdlr.FriendMembershipFee
+		}
 	}
 
 	if len(form.AssocFriendStr) > 0 {
-		assocFriend = true
-		assocFriendFee = hdlr.FriendMembershipFee
+		form.AssocFriend = getTickBox(form.AssocFriendStr)
+		if form.AssocFriend {
+			assocFriendFee = hdlr.AssociateMembershipFee
+		}
+	}
+
+	if len(form.GiftaidStr) > 0 {
+		form.Giftaid = getTickBox(form.GiftaidStr)
 	}
 
 	var donationToSociety, donationToMuseum float64
@@ -670,8 +679,8 @@ func (hdlr *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// The payment ID is initially null.  It will be supplied by the card
-	// processor later if the payment is successful.
+	// The payment ID is initially an empty string.  It will be supplied
+	// by the payment processor later if the payment is successful.
 	now := time.Now()
 	ms := database.MembershipSale{
 		PaymentService:           "Stripe",
@@ -679,14 +688,15 @@ func (hdlr *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 		MembershipYear:           database.GetPaymentYear(now),
 		OrdinaryMemberID:         userID,
 		OrdinaryMemberFee:        hdlr.OrdinaryMembershipFee,
-		OrdinaryMemberIsFriend:   friend,
+		OrdinaryMemberIsFriend:   form.Friend,
 		OrdinaryMemberFriendFee:  friendFee,
 		AssociateMemberID:        assocUserID,
-		AssocMemberIsFriend:      assocFriend,
+		AssocMemberIsFriend:      form.AssocFriend,
 		AssociateMemberFee:       assocFee,
 		AssociateMemberFriendFee: assocFriendFee,
 		DonationToSociety:        donationToSociety,
 		DonationToMuseum:         donationToMuseum,
+		Giftaid:                  form.Giftaid,
 	}
 
 	dbConfig := database.GetDBConfigFromTheEnvironment()
