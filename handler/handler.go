@@ -877,6 +877,7 @@ const emailErrorMessage = "You must fill in the email address"
 const assocFirstNameErrorMessage = "If you fill in anything in this section, you must fill in the first name"
 const assocLastNameErrorMessage = "If you fill in anything in this section, you must fill in the last name"
 const invalidNumber = "must be a number"
+const negativeNumber = "must be a 0 or greater"
 const noSuchMember = "cannot find this member"
 
 // simpleValidate takes the form parameters as arguments.  It returns true
@@ -978,32 +979,61 @@ func simpleValidate(form *PaymentFormData) bool {
 		form.AssocFriendStr = "off"
 	}
 
-	// The incoming string values are valid, now check the contents.
+	// The mandatory parameters are all submitted.  Now check the contents.
 
-	n1, donationToSocietyError :=
-		fmt.Sscanf(form.DonationToSocietyStr, "%f", &form.DonationToSociety)
+	// If donation values are submitted, they must be numbers and not
+	// negative.
 
-	if donationToSocietyError != nil {
-		form.DonationToSocietyErrorMessage = invalidNumber
-		form.Valid = false
-	}
-	if n1 < 1 {
-		form.DonationToSocietyErrorMessage = invalidNumber
-		form.Valid = false
+	if len(form.DonationToSocietyStr) > 0 {
+
+		errorMessage, dts := checkDonation(form.DonationToSocietyStr)
+		if len(errorMessage) > 0 {
+			form.DonationToSocietyErrorMessage = errorMessage
+			form.Valid = false
+		} else {
+			form.DonationToSociety = dts
+		}
 	}
 
-	n2, donationToMuseumError :=
-		fmt.Sscanf(form.DonationToMuseumStr, "%f", &form.DonationToMuseum)
-	if donationToMuseumError != nil {
-		form.DonationToMuseumErrorMessage = invalidNumber
-		form.Valid = false
-	}
-	if n2 < 1 {
-		form.DonationToMuseumErrorMessage = invalidNumber
-		form.Valid = false
+	if len(form.DonationToMuseumStr) > 0 {
+
+		errorMessage, dtm := checkDonation(form.DonationToMuseumStr)
+		if len(errorMessage) > 0 {
+			form.DonationToMuseumErrorMessage = invalidNumber
+			form.Valid = false
+		} else {
+			form.DonationToMuseum = dtm
+		}
 	}
 
 	return form.Valid
+}
+
+// checkDonation checks a donation value - must be a valid float
+// and not negative.  Returns an empty error message and the donation
+// as a float64 OR an error message and 0.0.
+func checkDonation(str string) (string, float64) {
+	var v float64
+	if len(str) > 0 {
+
+		scannedItems, scanError := fmt.Sscanf(str, "%f", &v)
+
+		if scanError != nil {
+			return invalidNumber, 0.0
+		}
+
+		if scannedItems < 1 {
+			return invalidNumber, 0.0
+		}
+
+		// The number must not be negative!
+		if v < 0 {
+			return negativeNumber, 0.0
+		}
+	}
+
+	// Success!
+	return "", v
 }
 
 // validate does a complete validation of the form.  Ir calls simpleValidate takes the form parameters as arguments.  It looks up the

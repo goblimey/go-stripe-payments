@@ -5,6 +5,33 @@ import (
 	"testing"
 )
 
+// TestCheckDonation checks the checkDonation validation method -
+// a donation string value must contain a 0 or positive float.
+func TestCheckDonation(t *testing.T) {
+	var testData = []struct {
+		str              string
+		wantErrorMessage string
+		wantValue        float64
+	}{
+
+		{"1.3", "", 1.3},
+		{"0.1", "", 0.1},
+		{"junk", invalidNumber, 0.0},
+		{"-0.1", negativeNumber, 0.0},
+		{"", "", 0.0},
+	}
+
+	for _, td := range testData {
+		gotErrorMessage, gotValue := checkDonation(td.str)
+		if td.wantValue != gotValue {
+			t.Errorf("%s: want %f got %f", td.str, td.wantValue, gotValue)
+		}
+		if td.wantErrorMessage != gotErrorMessage {
+			t.Errorf("%s: want %s got %s", td.str, td.wantErrorMessage, gotErrorMessage)
+		}
+	}
+}
+
 // TestGetTickBox checks the getTextBox function.
 func TestGetTickBox(t *testing.T) {
 	var testData = []struct {
