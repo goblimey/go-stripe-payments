@@ -636,7 +636,6 @@ func (hdlr *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 			fmt.Println("checkout:", assocUserErr.Error())
 			reportError(w, assocUserErr)
 		}
-		// total += associateMembership
 	}
 
 	if assocUserID > 0 {
@@ -661,23 +660,26 @@ func (hdlr *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 		form.Giftaid = getTickBox(form.GiftaidStr)
 	}
 
-	var donationToSociety, donationToMuseum float64
 	if len(form.DonationToSocietyStr) > 0 {
-		_, donationSocietyErr :=
-			fmt.Sscanf(form.DonationToSocietyStr, "%f", &donationToSociety)
-		if donationSocietyErr != nil {
-			fmt.Println("checkout:", "donationToSociety", donationSocietyErr.Error())
-			reportError(w, donationSocietyErr)
+
+		e, v := checkDonation(form.DonationToSocietyStr)
+		if len(e) > 0 {
+			fmt.Println("checkout:", "donationToSociety - ", e)
+			reportError(w, errors.New("donation to society - "+e))
 		}
+
+		form.DonationToSociety = v
 	}
 
 	if len(form.DonationToMuseumStr) > 0 {
-		_, donationMuseumErr :=
-			fmt.Sscanf(form.DonationToMuseumStr, "%f", &donationToMuseum)
-		if donationMuseumErr != nil {
-			fmt.Println("checkout:", "donationToMuseum", donationMuseumErr.Error())
-			reportError(w, donationMuseumErr)
+
+		e, v := checkDonation(form.DonationToMuseumStr)
+		if len(e) > 0 {
+			fmt.Println("checkout:", "DonationToMuseum - ", e)
+			reportError(w, errors.New("donation to museum - "+e))
 		}
+
+		form.DonationToMuseum = v
 	}
 
 	// The payment ID is initially an empty string.  It will be supplied
@@ -695,8 +697,8 @@ func (hdlr *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 		AssocMemberIsFriend:      form.AssocFriend,
 		AssociateMemberFee:       assocFee,
 		AssociateMemberFriendFee: assocFriendFee,
-		DonationToSociety:        donationToSociety,
-		DonationToMuseum:         donationToMuseum,
+		DonationToSociety:        form.DonationToSociety,
+		DonationToMuseum:         form.DonationToMuseum,
 		Giftaid:                  form.Giftaid,
 	}
 
