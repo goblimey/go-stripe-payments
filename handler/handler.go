@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"strings"
 	"text/template"
 	"time"
@@ -17,6 +16,10 @@ import (
 	"github.com/goblimey/go-stripe-payments/config"
 	"github.com/goblimey/go-stripe-payments/database"
 )
+
+const ordinaryMembershipFee = float64(24)
+const associateMembershipFee = float64(6)
+const friendMembershipFee = float64(5)
 
 var paymentPageTemplate *template.Template
 
@@ -33,34 +36,34 @@ type PaymentFormData struct {
 	Valid bool
 
 	// Reference Data.
-	PaymentYear           int    // The payment year displayed in the title.
-	OrdinaryMemberFeeStr  string // The fee for ordinary membership.
-	AssociateMemberFeeStr string // The fee for associate membership.
-	FriendFeeStr          string // The fee for a friend of the museum.
+	PaymentYear            int     // The payment year displayed in the title.
+	OrdinaryMembershipFee  float64 // The ordinary member fee
+	AssociateMembershipFee float64 // The associate member fee. (0 if no associate.)
+	FriendMembershipFee    float64 // The friend fee.  (0 if no associate or not friend).
 
 	// Data for validation.
-	FirstName            string
-	LastName             string
-	Email                string
-	FriendStr            string // tickbox - "on", "off", "checked" or "unchecked"
-	DonationToSocietyStr string // number
-	DonationToMuseumStr  string // number
-	GiftaidStr           string // tickbox - "on", "off", "checked" or "unchecked"
-	AssocFirstName       string
-	AssocLastName        string
-	AssocEmail           string
-	AssocFriendStr       string // tickbox - "on", "off", "checked" or "unchecked"
+	FirstName              string
+	LastName               string
+	Email                  string
+	FriendInput            string // tickbox - "on", "off", "checked" or "unchecked"
+	DonationToSocietyInput string // number
+	DonationToMuseumInput  string // number
+	GiftaidInput           string // tickbox - "on", "off", "checked" or "unchecked"
+	AssocFirstName         string
+	AssocLastName          string
+	AssocEmail             string
+	AssociateIsFriendInput string // tickbox - "on", "off", "checked" or "unchecked"
 
 	//  Values set during validation.
-	Friend            bool    // True if the ordinary member's Friend tickbox is valid and true.
-	DonationToSociety float64 // Set during validation
-	DonationToMuseum  float64 // Set during validation
-	Giftaid           bool    // True if the giftaid tickbox is valid and true.
-	AssocFriend       bool    // True if the associate member's friend tickbox is valid and true.
 
-	OrdinaryMemberFee  float64 // The ordinary member fee converted to float.
-	AssociateMemberFee float64 // The associate member fee converted to float.
-	FriendFee          float64 // The friend fee converted to float.
+	Friend                  bool    // True if the ordinary member's Friend tickbox is valid and true.
+	FriendOutput            string  // Checkbox setting - "checked" or "unchecked"
+	DonationToSociety       float64 // Donation to the society.
+	DonationToMuseum        float64 // Donation to the museum.
+	Giftaid                 bool    // True if the giftaid tickbox is valid and true.
+	GiftaidOutput           string  // Checkbox setting - "checked" or "unchecked"
+	AssociateIsFriend       bool    // True if the associate member's friend tickbox is valid and true.
+	AssociateIsFriendOutput string  // Checkbox setting - "checked" or "unchecked"
 
 	UserID      int // The ID of the ordinary member in the database (> zero).
 	AssocUserID int // The ID of the associate member in the database (zero if no associate).
@@ -78,35 +81,62 @@ type PaymentFormData struct {
 
 // NewPaymentForm finds the membership year we are currently selling
 // and creates a payment form.
-func NewPaymentForm(ordinaryMembershipFeeStr, associateMembershipFeeStr, friendMembershipFeeStr string) *PaymentFormData {
+func NewPaymentForm() *PaymentFormData {
+
 	paymentYear := database.GetPaymentYear(time.Now())
-	f := createPaymentForm(
-		paymentYear,
-		ordinaryMembershipFeeStr,
-		associateMembershipFeeStr,
-		friendMembershipFeeStr,
-	)
+	f := createPaymentForm(paymentYear)
 
 	return f
 }
 
 // createPaymentForm sets the payment form with the reference data
 // and the given payment year.  Factored out to support unit testing.
-func createPaymentForm(
-	paymentYear int,
-	ordinaryMembershipFeeStr,
-	associateMembershipFeeStr,
-	friendMembershipFeeStr string,
-) *PaymentFormData {
+func createPaymentForm(paymentYear int) *PaymentFormData {
 
 	f := PaymentFormData{
-		PaymentYear:           paymentYear,
-		OrdinaryMemberFeeStr:  ordinaryMembershipFeeStr,
-		AssociateMemberFeeStr: associateMembershipFeeStr,
-		FriendFeeStr:          friendMembershipFeeStr,
+		PaymentYear:            paymentYear,
+		OrdinaryMembershipFee:  ordinaryMembershipFee,
+		AssociateMembershipFee: associateMembershipFee,
+		FriendMembershipFee:    friendMembershipFee,
 	}
 
 	return &f
+}
+
+// OrdinaryMembershipFeeForDisplay gets the ordinary membership fee
+// for a display - a number to two decimal places.
+func (form *PaymentFormData) OrdinaryMembershipFeeForDisplay() string {
+	return fmt.Sprintf("%.2f", form.OrdinaryMembershipFee)
+}
+
+// AssociateMembershipFeeForDisplay gets the associate membership fee
+// for a display - a number to two decimal places.
+func (form *PaymentFormData) AssociateMembershipFeeForDisplay() string {
+	return fmt.Sprintf("%.2f", form.AssociateMembershipFee)
+}
+
+// DonationToMuseumForDisplay gets the donation to museum
+// for a display - a number to two decimal places.
+func (form *PaymentFormData) DonationToMuseumForDisplay() string {
+	if form.DonationToMuseum == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%.2f", form.DonationToMuseum)
+}
+
+// DonationToSocietyForDisplay gets the donation to the society
+// for a display - a number to two decimal places.
+func (form *PaymentFormData) DonationToSocietyForDisplay() string {
+	if form.DonationToSociety == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%.2f", form.DonationToSociety)
+}
+
+// FriendMembershipFeeForDisplay gets the friend membership fee
+// for display - a number to two decimal places.
+func (form *PaymentFormData) FriendMembershipFeeForDisplay() string {
+	return fmt.Sprintf("%.2f", form.FriendMembershipFee)
 }
 
 // MarkMandatoryFields marks the mandatory parameters in a
@@ -118,68 +148,38 @@ func (f *PaymentFormData) MarkMandatoryFields() {
 	f.EmailErrorMessage = "*"
 }
 
-// MustSetFees converts the fees as strings to floats.  The app can't
-// work without this so any error is fatal.
-func MustSetFees(ordinaryMembershipFeeStr, associateMembershipFeeStr, friendMembershipFeeStr string) (float64, float64, float64) {
-
-	var ordinaryMembershipFee float64
-	n1, ordinaryMembershipFeeError :=
-		fmt.Sscanf(ordinaryMembershipFeeStr, "%f", &ordinaryMembershipFee)
-	if ordinaryMembershipFeeError != nil {
-		fmt.Println("MustSetFees: illegal ordinaryMembershipFee ", ordinaryMembershipFeeStr)
-		os.Exit(-1)
-	}
-	if n1 < 1 {
-		fmt.Println("MustSetFees: Failed to convert ordinaryMembershipFee ", ordinaryMembershipFeeStr)
-		os.Exit(-1)
-	}
-
-	var associateMembershipFee float64
-	n2, associateMembershipFeeError :=
-		fmt.Sscanf(associateMembershipFeeStr, "%f", &associateMembershipFee)
-	if associateMembershipFeeError != nil {
-		fmt.Println("MustSetFees: illegal associateMembershipFee ", associateMembershipFeeStr)
-		os.Exit(-1)
-	}
-	if n2 < 1 {
-		fmt.Println("MustSetFees: Failed to convert associateMembershipFee ", associateMembershipFeeStr)
-		os.Exit(-1)
-	}
-
-	var friendMembershipFee float64
-	n3, friendMembershipFeeError :=
-		fmt.Sscanf(friendMembershipFeeStr, "%f", &friendMembershipFee)
-	if friendMembershipFeeError != nil {
-		fmt.Println("MustSetFees: illegal friendMembershipFee ", friendMembershipFeeStr)
-		os.Exit(-1)
-	}
-	if n3 < 1 {
-		fmt.Println("MustSetFees: Failed to convert friendMembershipFee ", friendMembershipFeeStr)
-		os.Exit(-1)
-	}
-
-	return ordinaryMembershipFee, associateMembershipFee, friendMembershipFee
-}
-
 type Handler struct {
 	Conf                   *config.Config // The config.
 	PaymentYear            int            // The membership year we are currently selling.
 	OrdinaryMembershipFee  float64
 	AssociateMembershipFee float64
 	FriendMembershipFee    float64
-	// The display versions of the fees, eg "24".
-	OrdinaryMembershipFeeStr  string
-	AssociateMembershipFeeStr string
-	FriendMembershipStr       string
-	Protocol                  string // "http" or "https"
+	Protocol               string // "http" or "https"
 }
 
-func New(
-	conf *config.Config,
-	ordinaryMembershipFee float64,
-	associateMembershipFee float64,
-	friendMembershipFee float64,
-) *Handler {
+// OrdinaryMembershipFeeForDisplay gets the ordinary membership fee
+// for a display - a number to two decimal places.
+func (hdlr *Handler) OrdinaryMembershipFeeForDisplay() string {
+	return fmt.Sprintf("%.2f", hdlr.OrdinaryMembershipFee)
+}
+
+// AssociateMembershipFeeForDisplay gets the associate membership fee
+// for display - a number to two decimal places.  If there is no
+// associate, it returns "0.0".
+func (hdlr *Handler) AssociateMembershipFeeForDisplay() string {
+
+	return fmt.Sprintf("%.2f", hdlr.AssociateMembershipFee)
+}
+
+// OrdinaryMemberFriendFeeForDisplay gets the ordinary member's
+// museum friend fee for display - a number to two decimal places.
+// If the member is not a friend, it returns "0.0".
+func (hdlr *Handler) FriendFeeForDisplay() string {
+
+	return fmt.Sprintf("%.2f", hdlr.FriendMembershipFee)
+}
+
+func New(conf *config.Config) *Handler {
 
 	var protocol string
 	if len(conf.SSLCertificateFile) > 0 {
@@ -190,14 +190,11 @@ func New(
 
 	h := Handler{
 
-		Conf:                      conf,
-		OrdinaryMembershipFee:     ordinaryMembershipFee,
-		AssociateMembershipFee:    associateMembershipFee,
-		FriendMembershipFee:       friendMembershipFee,
-		OrdinaryMembershipFeeStr:  fmt.Sprintf("%.2f", ordinaryMembershipFee),
-		AssociateMembershipFeeStr: fmt.Sprintf("%.2f", associateMembershipFee),
-		FriendMembershipStr:       fmt.Sprintf("%.2f", friendMembershipFee),
-		Protocol:                  protocol,
+		Conf:                   conf,
+		OrdinaryMembershipFee:  ordinaryMembershipFee,
+		AssociateMembershipFee: associateMembershipFee,
+		FriendMembershipFee:    friendMembershipFee,
+		Protocol:               protocol,
 	}
 
 	return &h
@@ -209,11 +206,7 @@ func New(
 // displays the payment data form again with error messages.
 func (hdlr *Handler) GetPaymentData(w http.ResponseWriter, r *http.Request) {
 
-	form := NewPaymentForm(
-		hdlr.OrdinaryMembershipFeeStr,
-		hdlr.AssociateMembershipFeeStr,
-		hdlr.FriendMembershipStr,
-	)
+	form := NewPaymentForm()
 
 	dbConfig := database.GetDBConfigFromTheEnvironment()
 	db := database.New(dbConfig)
@@ -238,15 +231,15 @@ func (hdlr *Handler) paymentDataHelper(w http.ResponseWriter, r *http.Request, f
 	form.FirstName = r.PostFormValue("first_name")
 	form.LastName = r.PostFormValue("last_name")
 	form.Email = r.PostFormValue("email")
-	form.FriendStr = r.PostFormValue("friend")
-	form.DonationToSocietyStr = r.PostFormValue("donation_to_society")
-	form.DonationToMuseumStr = r.PostFormValue("donation_to_museum")
-	form.GiftaidStr = r.PostFormValue("giftaid")
+	form.FriendInput = r.PostFormValue("friend")
+	form.DonationToSocietyInput = r.PostFormValue("donation_to_society")
+	form.DonationToMuseumInput = r.PostFormValue("donation_to_museum")
+	form.GiftaidInput = r.PostFormValue("giftaid")
 
 	form.AssocFirstName = r.PostFormValue("assoc_first_name")
 	form.AssocLastName = r.PostFormValue("assoc_last_name")
 	form.AssocEmail = r.PostFormValue("assoc_email")
-	form.AssocFriendStr = r.PostFormValue("assoc_friend")
+	form.AssociateIsFriendInput = r.PostFormValue("assoc_friend")
 
 	// Validate the form data.  On the first call the form is empty.
 	// The validator sets error messages containing asterisks against
@@ -268,15 +261,14 @@ func (hdlr *Handler) paymentDataHelper(w http.ResponseWriter, r *http.Request, f
 	// it are for real users.  Build and display the payment confirmation
 	// page.
 
-	ms := database.MembershipSale{
-		MembershipYear:    form.PaymentYear,
-		OrdinaryMemberID:  form.UserID,            // Always present.
-		AssociateMemberID: form.AssocUserID,       // 0 if no associated member.
-		OrdinaryMemberFee: form.OrdinaryMemberFee, // Always present.
-		DonationToSociety: form.DonationToSociety, // 0.0 if no donation given.
-		DonationToMuseum:  form.DonationToMuseum,  // 0.0 if no donation given.
-		// The tick boxes are dealt with below.
-	}
+	ms := database.NewMembershipSale(form.OrdinaryMembershipFee)
+	ms.MembershipYear = form.PaymentYear
+	ms.OrdinaryMemberID = form.UserID                 // Always present.
+	ms.AssociateMemberID = form.AssocUserID           // 0 if no associated member.
+	ms.OrdinaryMemberFee = form.OrdinaryMembershipFee // Always present.
+	ms.DonationToSociety = form.DonationToSociety     // 0.0 if no donation given.
+	ms.DonationToMuseum = form.DonationToMuseum       // 0.0 if no donation given.
+
 	// Create a list of hidden variables to drive the next request.
 	hiddenVars := `
 			<input type='hidden' name='user_id' value='{{.OrdinaryMemberID}}'>
@@ -285,6 +277,7 @@ func (hdlr *Handler) paymentDataHelper(w http.ResponseWriter, r *http.Request, f
 	if form.Friend {
 		// The ordinary member wants to be a friend of the museum.
 		ms.OrdinaryMemberIsFriend = true
+		ms.OrdinaryMemberFriendFee = form.FriendMembershipFee
 		hiddenVars += `
 	<input type='hidden' name='friend' value='on'>
 `
@@ -300,37 +293,39 @@ func (hdlr *Handler) paymentDataHelper(w http.ResponseWriter, r *http.Request, f
 
 	if form.AssocUserID > 0 {
 		// There is an associate member.
-		ms.AssociateMemberFee = form.AssociateMemberFee
+		ms.AssociateMemberFee = form.AssociateMembershipFee
 		hiddenVars += `
 			<input type='hidden' name='assoc_user_id' value='{{.AssociateMemberID}}'>
 `
-	}
 
-	if form.AssocFriend {
-		// The associate member wants to be a friend of the museum.
-		ms.AssocMemberIsFriend = true
-		ms.AssociateMemberFriendFee = form.FriendFee
-		hiddenVars += `
-			<input type='hidden' name='assoc_friend' value='on'>
+		if form.AssociateIsFriend {
+			// The associate member wants to be a friend of the museum.
+			ms.AssocMemberIsFriend = true
+			ms.AssociateMemberFriendFee = form.FriendMembershipFee
+			hiddenVars += `
+		<input type='hidden' name='assoc_friend' value='on'>
 `
+		}
 	}
 
 	if form.DonationToSociety > 0.0 {
+		ms.DonationToSociety = form.DonationToSociety
 		hiddenVars += `
-			<input type='hidden' name='donation_to_society' value='{{.DonationToSociety}}'>
+			<input type='hidden' name='donation_to_society' value='{{.DonationToSocietyForDisplay}}'>
 `
 	}
 
 	if form.DonationToMuseum > 0.0 {
+		ms.DonationToMuseum = form.DonationToMuseum
 		hiddenVars += `
-			<input type='hidden' name='donation_to_museum' value='{{.DonationToMuseum}}'>
+			<input type='hidden' name='donation_to_museum' value='{{.DonationToMuseumForDisplay}}'>
 `
 	}
 
-	insert := hdlr.createCostBreakdown(&ms) + hiddenVars
+	insert := hdlr.createCostBreakdown(ms) + hiddenVars
 
 	// Insert the cost breakdown and the hidden variables into the
-	// shopping trolley page temlate.
+	// shopping trolley page template.
 	paymentConfirmationPageTemplateBody := fmt.Sprintf(paymentConfirmationPageTemplateStr, insert)
 
 	// Check the template.
@@ -590,7 +585,7 @@ func (hdlr *Handler) successHelper(salesIDstr, sessionID string, w http.Response
 	}
 
 	// Write the response.
-	executeError := successPageTemplate.Execute(w, ms)
+	executeError := successPageTemplate.Execute(w, &ms)
 
 	if executeError != nil {
 		errorHTML := fmt.Sprintf(errorHTMLTemplate, executeError.Error())
@@ -608,11 +603,11 @@ func (hdlr *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 	form := PaymentFormData{}
 	userIDParam := r.PostFormValue("user_id")
 	assocUserIDParam := r.PostFormValue("assoc_user_id")
-	form.FriendStr = r.PostFormValue("friend")
-	form.AssocFriendStr = r.PostFormValue("assoc_friend")
-	form.DonationToSocietyStr = r.PostFormValue("donation_to_society")
-	form.DonationToMuseumStr = r.PostFormValue("donation_to_museum")
-	form.GiftaidStr = r.PostFormValue("giftaid")
+	form.FriendInput = r.PostFormValue("friend")
+	form.AssociateIsFriendInput = r.PostFormValue("assoc_friend")
+	form.DonationToSocietyInput = r.PostFormValue("donation_to_society")
+	form.DonationToMuseumInput = r.PostFormValue("donation_to_museum")
+	form.GiftaidInput = r.PostFormValue("giftaid")
 
 	if len(userIDParam) == 0 {
 		// Somebody has bypassed the form that we gave them.
@@ -642,27 +637,28 @@ func (hdlr *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 		assocFee = hdlr.AssociateMembershipFee
 	}
 
-	if len(form.FriendStr) > 0 {
-		form.Friend = getTickBox(form.FriendStr)
+	if len(form.FriendInput) > 0 {
+		form.Friend, form.FriendOutput = getTickBox(form.FriendInput)
 		if form.Friend {
 			friendFee = hdlr.FriendMembershipFee
 		}
 	}
 
-	if len(form.AssocFriendStr) > 0 {
-		form.AssocFriend = getTickBox(form.AssocFriendStr)
-		if form.AssocFriend {
-			assocFriendFee = hdlr.AssociateMembershipFee
+	if len(form.AssociateIsFriendInput) > 0 {
+		form.AssociateIsFriend, form.AssociateIsFriendOutput =
+			getTickBox(form.AssociateIsFriendInput)
+		if form.AssociateIsFriend {
+			assocFriendFee = hdlr.FriendMembershipFee
 		}
 	}
 
-	if len(form.GiftaidStr) > 0 {
-		form.Giftaid = getTickBox(form.GiftaidStr)
+	if len(form.GiftaidInput) > 0 {
+		form.Giftaid, form.GiftaidOutput = getTickBox(form.GiftaidInput)
 	}
 
-	if len(form.DonationToSocietyStr) > 0 {
+	if len(form.DonationToSocietyInput) > 0 {
 
-		e, v := checkDonation(form.DonationToSocietyStr)
+		e, v := checkDonation(form.DonationToSocietyInput)
 		if len(e) > 0 {
 			fmt.Println("checkout:", "donationToSociety - ", e)
 			reportError(w, errors.New("donation to society - "+e))
@@ -671,9 +667,9 @@ func (hdlr *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 		form.DonationToSociety = v
 	}
 
-	if len(form.DonationToMuseumStr) > 0 {
+	if len(form.DonationToMuseumInput) > 0 {
 
-		e, v := checkDonation(form.DonationToMuseumStr)
+		e, v := checkDonation(form.DonationToMuseumInput)
 		if len(e) > 0 {
 			fmt.Println("checkout:", "DonationToMuseum - ", e)
 			reportError(w, errors.New("donation to museum - "+e))
@@ -694,7 +690,7 @@ func (hdlr *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 		OrdinaryMemberIsFriend:   form.Friend,
 		OrdinaryMemberFriendFee:  friendFee,
 		AssociateMemberID:        assocUserID,
-		AssocMemberIsFriend:      form.AssocFriend,
+		AssocMemberIsFriend:      form.AssociateIsFriend,
 		AssociateMemberFee:       assocFee,
 		AssociateMemberFriendFee: assocFriendFee,
 		DonationToSociety:        form.DonationToSociety,
@@ -718,8 +714,6 @@ func (hdlr *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 		reportError(w, createError)
 	}
 
-	salesIDStr := fmt.Sprintf("%d", salesID)
-
 	successURL := fmt.Sprintf("%s://%s/success?session_id={CHECKOUT_SESSION_ID}", hdlr.Protocol, r.Host)
 	cancelURL := fmt.Sprintf("%s://%s/cancel", hdlr.Protocol, r.Host)
 
@@ -741,6 +735,9 @@ func (hdlr *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 
 	// Create a checkout session containing a client reference ID
 	// that gives the ms_id of the sales record.
+
+	salesIDStr := fmt.Sprintf("%d", salesID)
+
 	params := &stripe.CheckoutSessionParams{
 		Mode:            stripe.String(string(stripe.CheckoutSessionModePayment)),
 		InvoiceCreation: &invoiceCreation,
@@ -789,27 +786,13 @@ func displayPaymentForm(w io.Writer, form *PaymentFormData) {
 // with the mandatory parameters marked with asterisks.
 func (hdlr *Handler) displayInitialPaymentForm(w io.Writer) {
 
-	form := hdlr.createPaymentFormData(hdlr.PaymentYear)
+	form := NewPaymentForm()
 	form.MarkMandatoryFields()
 	executeError := paymentPageTemplate.Execute(w, form)
 
 	if executeError != nil {
 		fmt.Println(executeError)
 	}
-}
-
-// createPaymentForm sets the payment form with the reference data
-// and the given payment year.  Factored out to support unit testing.
-func (h *Handler) createPaymentFormData(paymentYear int) *PaymentFormData {
-
-	f := PaymentFormData{
-		PaymentYear:          paymentYear,
-		OrdinaryMemberFeeStr: h.OrdinaryMembershipFeeStr,
-		AssociateMemberFee:   h.AssociateMembershipFee,
-		FriendFee:            h.FriendMembershipFee,
-	}
-
-	return &f
 }
 
 // createCostBreakdown creates an HTML table showing the cost of the
@@ -820,7 +803,7 @@ func (hdlr *Handler) createCostBreakdown(ms *database.MembershipSale) string {
 <table>
 	<tr>
 	    <td style='border: 0'>ordinary membership</td>
-		<td style='border: 0'>£{{.OrdinaryMemberFee}}</td>
+		<td style='border: 0'>£{{.OrdinaryMembershipFeeForDisplay}}</td>
 	</tr>
 `
 
@@ -828,7 +811,7 @@ func (hdlr *Handler) createCostBreakdown(ms *database.MembershipSale) string {
 		table += `
 	<tr>
 	    <td style='border: 0'>friend of the museum</td>
-		<td style='border: 0'>£{{.OrdinaryMemberFriendFee}}</td>
+		<td style='border: 0'>£{{.OrdinaryMemberFriendFeeForDisplay}}</td>
 	</tr>
 `
 	}
@@ -837,7 +820,7 @@ func (hdlr *Handler) createCostBreakdown(ms *database.MembershipSale) string {
 		table += `
 	<tr>
 	    <td style='border: 0'>associate member</td>
-		<td style='border: 0'>£{{.AssociateMemberFee}}</td>
+		<td style='border: 0'>£{{.AssociateMembershipFeeForDisplay}}</td>
 	</tr>		
 `
 	}
@@ -846,7 +829,7 @@ func (hdlr *Handler) createCostBreakdown(ms *database.MembershipSale) string {
 		table += `
 	<tr>
 	    <td style='border: 0'>associate is friend of the museum</td>
-		<td style='border: 0'>£{{.AssociateMemberFriendFee}}</td>
+		<td style='border: 0'>£{{.AssociateMemberFriendFeeForDisplay}}</td>
 	</tr>
 `
 	}
@@ -855,7 +838,7 @@ func (hdlr *Handler) createCostBreakdown(ms *database.MembershipSale) string {
 		table += `
 	<tr>
 	    <td style='border: 0'>donation to the society</td>
-		<td style='border: 0'>£{{.DonationToSociety}}</td>
+		<td style='border: 0'>£{{.DonationToSocietyForDisplay}}</td>
 	</tr>		
 `
 	}
@@ -864,19 +847,17 @@ func (hdlr *Handler) createCostBreakdown(ms *database.MembershipSale) string {
 		table += `
 	<tr>
 	    <td style='border: 0'>donation to the museum</td>
-		<td style='border: 0'>£{{.DonationToMuseum}}</td>
+		<td style='border: 0'>£{{.DonationToMuseumForDisplay}}</td>
 	</tr>
 	`
 	}
 
-	totalTemplate := `
+	table += `
 	<tr>
 	    <td style='border: 0'><b>Total</b></td>
-		<td style='border: 0'>£%.2f</td>
+		<td style='border: 0'>£{{.TotalPaymentForDisplay}}</td>
 	</tr>
 `
-
-	table += fmt.Sprintf(totalTemplate, ms.TotalPayment())
 
 	table += `</table>
 `
@@ -900,8 +881,8 @@ const noSuchMember = "cannot find this member"
 func simpleValidate(form *PaymentFormData) bool {
 
 	// Set the fees in the form.
-	form.OrdinaryMemberFee, form.AssociateMemberFee, form.FriendFee =
-		MustSetFees(form.OrdinaryMemberFeeStr, form.AssociateMemberFeeStr, form.FriendFeeStr)
+	// form.OrdinaryMemberFee, form.AssociateMemberFee, form.FriendFee =
+	// 	MustSetFees(form.OrdinaryMemberFeeStr, form.AssociateMemberFeeStr, form.FriendFeeStr)
 
 	// form.Valid starts true and is set false if any of the form data is invalid.
 	form.Valid = true
@@ -909,14 +890,14 @@ func simpleValidate(form *PaymentFormData) bool {
 	if len(form.FirstName) == 0 &&
 		len(form.LastName) == 0 &&
 		len(form.Email) == 0 &&
-		len(form.FriendStr) == 0 &&
+		len(form.FriendInput) == 0 &&
 		len(form.AssocFirstName) == 0 &&
 		len(form.AssocLastName) == 0 &&
 		len(form.AssocEmail) == 0 &&
-		len(form.AssocFriendStr) == 0 &&
-		len(form.DonationToSocietyStr) == 0 &&
-		len(form.DonationToMuseumStr) == 0 &&
-		len(form.GiftaidStr) == 0 {
+		len(form.AssociateIsFriendInput) == 0 &&
+		len(form.DonationToSocietyInput) == 0 &&
+		len(form.DonationToMuseumInput) == 0 &&
+		len(form.GiftaidInput) == 0 {
 
 		// On the first call the form is empty.  Mark the mandatory fields.
 		// Return false and the handler will display the form
@@ -929,15 +910,15 @@ func simpleValidate(form *PaymentFormData) bool {
 	form.FirstName = strings.TrimSpace(form.FirstName)
 	form.LastName = strings.TrimSpace(form.LastName)
 	form.Email = strings.TrimSpace(form.Email)
-	form.FriendStr = strings.TrimSpace(form.FriendStr)
-	form.DonationToSocietyStr = strings.TrimSpace(form.DonationToSocietyStr)
-	form.DonationToMuseumStr = strings.TrimSpace(form.DonationToMuseumStr)
-	form.GiftaidStr = strings.TrimSpace(form.GiftaidStr)
+	form.FriendInput = strings.TrimSpace(form.FriendInput)
+	form.DonationToSocietyInput = strings.TrimSpace(form.DonationToSocietyInput)
+	form.DonationToMuseumInput = strings.TrimSpace(form.DonationToMuseumInput)
+	form.GiftaidInput = strings.TrimSpace(form.GiftaidInput)
 
 	form.AssocFirstName = strings.TrimSpace(form.AssocFirstName)
 	form.AssocLastName = strings.TrimSpace(form.AssocLastName)
 	form.AssocEmail = strings.TrimSpace(form.AssocEmail)
-	form.AssocFriendStr = strings.TrimSpace(form.AssocFriendStr)
+	form.AssociateIsFriendInput = strings.TrimSpace(form.AssociateIsFriendInput)
 
 	if len(form.FirstName) == 0 {
 		form.FirstNameErrorMessage = firstNameErrorMessage
@@ -954,26 +935,12 @@ func simpleValidate(form *PaymentFormData) bool {
 		form.Valid = false
 	}
 
-	form.Friend = getTickBox(form.FriendStr)
-	if form.Friend {
-		form.FriendStr = "on"
-	} else {
-		form.FriendStr = "off"
-	}
-
-	form.Giftaid = getTickBox(form.GiftaidStr)
-	if form.Giftaid {
-		form.GiftaidStr = "on"
-	} else {
-		form.GiftaidStr = "off"
-	}
-
 	// The associate fields are optional but if you fill in any
 	// of them, you must fill in the first and last name.
 	if len(form.AssocFirstName) > 0 ||
 		len(form.AssocLastName) > 0 ||
 		len(form.AssocEmail) > 0 ||
-		len(form.AssocFriendStr) > 0 {
+		len(form.AssociateIsFriendInput) > 0 {
 
 		if len(form.AssocFirstName) == 0 {
 			form.AssocFirstNameErrorMessage = assocFirstNameErrorMessage
@@ -985,21 +952,21 @@ func simpleValidate(form *PaymentFormData) bool {
 		}
 	}
 
-	form.AssocFriend = getTickBox(form.AssocFriendStr)
-	if form.AssocFriend {
-		form.AssocFriendStr = "on"
-	} else {
-		form.AssocFriendStr = "off"
-	}
+	form.Friend, form.FriendOutput = getTickBox(form.FriendInput)
 
-	// The mandatory parameters are all submitted.  Now check the contents.
+	form.Giftaid, form.GiftaidOutput = getTickBox(form.GiftaidInput)
+
+	form.AssociateIsFriend, form.AssociateIsFriendOutput =
+		getTickBox(form.AssociateIsFriendInput)
+
+	// The mandatory parameters are all present.  Now check the contents.
 
 	// If donation values are submitted, they must be numbers and not
 	// negative.
 
-	if len(form.DonationToSocietyStr) > 0 {
+	if len(form.DonationToSocietyInput) > 0 {
 
-		errorMessage, dts := checkDonation(form.DonationToSocietyStr)
+		errorMessage, dts := checkDonation(form.DonationToSocietyInput)
 		if len(errorMessage) > 0 {
 			form.DonationToSocietyErrorMessage = errorMessage
 			form.Valid = false
@@ -1008,9 +975,9 @@ func simpleValidate(form *PaymentFormData) bool {
 		}
 	}
 
-	if len(form.DonationToMuseumStr) > 0 {
+	if len(form.DonationToMuseumInput) > 0 {
 
-		errorMessage, dtm := checkDonation(form.DonationToMuseumStr)
+		errorMessage, dtm := checkDonation(form.DonationToMuseumInput)
 		if len(errorMessage) > 0 {
 			form.DonationToMuseumErrorMessage = invalidNumber
 			form.Valid = false
@@ -1049,7 +1016,7 @@ func checkDonation(str string) (string, float64) {
 	return "", v
 }
 
-// validate does a complete validation of the form.  Ir calls simpleValidate takes the form parameters as arguments.  It looks up the
+// validate does a complete validation of the form.  It calls simpleValidate takes the form parameters as arguments.  It looks up the
 // user in the database with the name and/or email address given in the form to
 // check that it exists.  If the details of the associate are given, it checks
 // that too.  It returns true and all empty strings if the user(s) exist, false
@@ -1088,16 +1055,16 @@ func validate(form *PaymentFormData, db *database.Database) bool {
 	return form.Valid
 }
 
-// getTickBox returns true if the tickbox is ticked ("on" or "checked"),
-// false otherwise.
-func getTickBox(value string) bool {
+// getTickBox returns true and "checked" if the tickbox is ticked ("on"),
+// false and "unchecked" otherwise.
+func getTickBox(value string) (bool, string) {
 	switch {
 	case len(value) == 0:
-		return false
-	case value == "on" || value == "checked":
-		return true
+		return false, "unchecked"
+	case value == "on":
+		return true, "checked"
 	default:
-		return false
+		return false, "unchecked"
 	}
 }
 
@@ -1135,9 +1102,9 @@ const paymentPageTemplateStr = `
 		<p>
 			Our fees this year are:
 		<ul>
-			<li>Ordinary member: £{{.OrdinaryMemberFee}}</li>
-			<li>Associate member at the same address: £{{.AssociateMemberFee}}</li>
-			<li>Friend of the Leatherhead museum: £{{.FriendFee}}</li>
+			<li>Ordinary member: £{{.OrdinaryMembershipFeeForDisplay}}</li>
+			<li>Associate member at the same address: £{{.AssociateMembershipFeeForDisplay}}</li>
+			<li>Friend of the Leatherhead museum: £{{.FriendMembershipFeeForDisplay}}</li>
 		</ul>
 		</p>
 		<p>
@@ -1163,26 +1130,26 @@ const paymentPageTemplateStr = `
 					<td style='border: 0'><span style="color:red;">{{.EmailErrorMessage}}</span></td>
 				</tr>
 				<tr>
-					<td style='border: 0'>Friend of the Museum (£5):</td>
+					<td style='border: 0'>Friend of the Museum:</td>
 					<td style='border: 0; '>
-						<input style='transform: scale(1.5);' type='checkbox' name='friend' {{.Friend}}>
+						<input style='transform: scale(1.5);' type='checkbox' name='friend' {{.FriendOutput}} />
 					</td>
 					<td style='border: 0'>&nbsp;</td>
 				</tr>
 				<tr>
 					<td style='border: 0'>Donation to the Society:</td>
-					<td style='border: 0'><input type='text' size='40' name='donation_to_society' value='{{.DonationToSocietyStr}}'></td>
+					<td style='border: 0'><input type='text' size='40' name='donation_to_society' value='{{.DonationToSocietyForDisplay}}'></td>
 					<td style='border: 0;'><span style="color:red;">{{.DonationToSocietyErrorMessage}}</span></td>
 				</tr>
 				<tr>
 					<td style='border: 0'>Donation to the Museum:</td>
-					<td style='border: 0'><input type='text' size='40' name='donation_to_museum' value='{{.DonationToMuseumStr}}'></td>
+					<td style='border: 0'><input type='text' size='40' name='donation_to_museum' value='{{.DonationToMuseumForDisplay}}'></td>
 					<td style='border: 0'><span style="color:red;">{{.DonationToMuseumErrorMessage}}</span></td>
 				</tr>
 				<tr>
 					<td style='border: 0'>Giftaid:</td>
 					<td style='border: 0 '>
-						<input style='transform: scale(1.5);' type='checkbox' name='giftaid' {{.Giftaid}}>
+						<input style='transform: scale(1.5);' type='checkbox' name='giftaid' {{.GiftaidOutput}} />
 					</td>
 					<td style='border: 0'>&nbsp;</td>
 				</tr>
@@ -1230,9 +1197,9 @@ const paymentPageTemplateStr = `
 					<td style='border: 0'>&nbsp;</td>
 				</tr>
 				<tr>
-					<td style='border: 0'>Friend of the Museum (£5):</td>
+					<td style='border: 0'>Friend of the Museum:</td>
 					<td style='border: 0'>
-						<input style='transform: scale(1.5);' type='checkbox' name='assoc_friend' {{.Friend}}>
+						<input style='transform: scale(1.5);' type='checkbox' name='assoc_friend' {{.AssociateIsFriendOutput}} />
 					</td>
 					<td style='border: 0'>&nbsp;</td>
 				</tr>

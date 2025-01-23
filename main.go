@@ -15,10 +15,6 @@ import (
 // The config.
 var conf *config.Config
 
-const ordinaryMembershipFee = float64(24)
-const associateMembershipFee = float64(6)
-const friendMembershipFee = float64(5)
-
 func main() {
 
 	// Get configuration.
@@ -32,15 +28,7 @@ func main() {
 	// Set the stripe secret key from the configuration.
 	stripe.Key = conf.StripeSecretKey
 
-	hdlr := handler.New(conf, ordinaryMembershipFee,
-		associateMembershipFee, friendMembershipFee)
-
-	// If we can't decipher the fees, there's no point continuing.
-	handler.MustSetFees(
-		hdlr.OrdinaryMembershipFeeStr,
-		hdlr.AssociateMembershipFeeStr,
-		hdlr.FriendMembershipStr,
-	)
+	hdlr := handler.New(conf)
 
 	//Get the database config and do a test connection.
 	dbConfig := database.GetDBConfigFromTheEnvironment()

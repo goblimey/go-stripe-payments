@@ -40,6 +40,15 @@ type MembershipSale struct {
 	AssociateMemberFriendFee float64 // The fee paid for associate member to be a fiend.
 }
 
+func NewMembershipSale(ordinaryMemberFee float64) *MembershipSale {
+
+	sale := MembershipSale{
+		OrdinaryMemberFee: ordinaryMemberFee,
+	}
+
+	return &sale
+}
+
 // Create() creates a MembershipSale record in the database.
 func (ms *MembershipSale) Create(db *Database) (int, error) {
 
@@ -223,14 +232,91 @@ func (ms *MembershipSale) Delete(db *Database) error {
 
 // TotalPayment adds up the fees and returns the total.
 func (ms *MembershipSale) TotalPayment() float64 {
-	return ms.OrdinaryMemberFee +
-		ms.AssociateMemberFee +
-		ms.OrdinaryMemberFriendFee +
-		ms.AssociateMemberFriendFee +
+	total := ms.OrdinaryMemberFee +
 		ms.DonationToSociety +
 		ms.DonationToMuseum
+
+	if ms.OrdinaryMemberIsFriend {
+		total += ms.OrdinaryMemberFriendFee
+	}
+
+	if ms.AssociateMemberID > 0 {
+		total += ms.AssociateMemberFee
+
+		if ms.AssocMemberIsFriend {
+			total += ms.AssociateMemberFriendFee
+		}
+	}
+
+	return total
 }
 
+// TotalPaymentForDisplay adds up the fees and returns the total
+// as a string showing a number to two decimal places.
+func (ms *MembershipSale) TotalPaymentForDisplay() string {
+	return fmt.Sprintf("%.2f", ms.TotalPayment())
+}
+
+// OrdinaryMembershipFeeForDisplay gets the ordinary membership fee
+// for a display - a number to two decimal places.
+func (ms *MembershipSale) OrdinaryMembershipFeeForDisplay() string {
+	return fmt.Sprintf("%.2f", ms.OrdinaryMemberFee)
+}
+
+// DonationToMuseumForDisplay gets the donation to museum
+// for a display - a number to two decimal places.
+func (ms *MembershipSale) DonationToMuseumForDisplay() string {
+	return fmt.Sprintf("%.2f", ms.DonationToMuseum)
+}
+
+// DonationToSocietyForDisplay gets the donation to the society
+// for a display - a number to two decimal places.
+func (ms *MembershipSale) DonationToSocietyForDisplay() string {
+	return fmt.Sprintf("%.2f", ms.DonationToSociety)
+}
+
+// AssociateMembershipFeeForDisplay gets the associate membership fee
+// for display - a number to two decimal places.  If there is no
+// associate, it returns "0.0".
+func (ms *MembershipSale) AssociateMembershipFeeForDisplay() string {
+	if ms.AssociateMemberID == 0 {
+		return "0.00"
+	}
+
+	return fmt.Sprintf("%.2f", ms.AssociateMemberFee)
+}
+
+// OrdinaryMemberFriendFeeForDisplay gets the ordinary member's
+// museum friend fee for display - a number to two decimal places.
+// If the member is not a friend, it returns "0.0".
+func (ms *MembershipSale) OrdinaryMemberFriendFeeForDisplay() string {
+
+	if !ms.OrdinaryMemberIsFriend {
+		return "0.00"
+	}
+
+	return fmt.Sprintf("%.2f", ms.OrdinaryMemberFriendFee)
+}
+
+// AssociateMemberFriendFeeForDisplay gets the associate member's
+// museum friend fee for display - a number to two decimal places.
+// If there is no associate or the associate is not a friend, it
+// returns "0.0".
+func (ms *MembershipSale) AssociateMemberFriendFeeForDisplay() string {
+
+	if ms.AssociateMemberID == 0 {
+		return "0.00"
+	}
+
+	if !ms.AssocMemberIsFriend {
+		return "0.00"
+	}
+
+	return fmt.Sprintf("%.2f", ms.AssociateMemberFriendFee)
+}
+
+// GetMembershipSale gets the membership_sale record for the user with
+// the given ID.
 func (db *Database) GetMembershipSale(id int) (*MembershipSale, error) {
 	const query = `
 	SELECT 
@@ -631,8 +717,6 @@ func (db *Database) SetFriendField(userID int, ticked bool) error {
 // adm_user_data.  In the DB, tick box fields are set to 0 or 1.
 func (db *Database) SetGiftaidField(userID int, ticked bool) error {
 
-	f := "SetGiftaidField"
-
 	fieldID, fieldError := db.getGiftaidID()
 	if fieldError != nil {
 		return fieldError
@@ -641,10 +725,8 @@ func (db *Database) SetGiftaidField(userID int, ticked bool) error {
 	// it's already set from last year but not this year, ensure that
 	// the value in the DB record is reset.
 	if ticked {
-		fmt.Printf("%s: setting giftaid to true for user %d\n", f, userID)
 		return db.SetUserDataIntField(fieldID, userID, 1)
 	} else {
-		fmt.Printf("%s: setting giftaid to false for user  %d\n", f, userID)
 		return db.SetUserDataIntField(fieldID, userID, 0)
 	}
 }

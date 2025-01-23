@@ -890,3 +890,141 @@ func checkMemberEndYear(db *Database, userID, targetYear int) error {
 	// Success!
 	return nil
 }
+
+// TestMembershipSalesDisplays checks the display functions of the
+// MembershipSale type.
+func TestMembershipSalesDisplays(t *testing.T) {
+
+	var testData = []struct {
+		description                 string
+		ms                          MembershipSale
+		wantOrdinaryMembershipFee   string
+		wantOrdinaryMemberFriendFee string
+		wantDonationToSociety       string
+		wantDonationToMuseum        string
+		wantAssociateMembersFee     string
+		wantAssociateFriendFee      string
+		wantTotal                   string
+	}{
+
+		{
+			"all",
+			MembershipSale{
+				OrdinaryMemberFee:        1.234,
+				OrdinaryMemberIsFriend:   true,
+				OrdinaryMemberFriendFee:  2.345,
+				DonationToSociety:        3.456,
+				DonationToMuseum:         4.567,
+				AssociateMemberID:        1,
+				AssociateMemberFee:       5.678,
+				AssocMemberIsFriend:      true,
+				AssociateMemberFriendFee: 6.789,
+			},
+			"1.23", "2.35", "3.46", "4.57", "5.68", "6.79", "24.07",
+		},
+		{
+			"ordinary only",
+			MembershipSale{
+				OrdinaryMemberFee:        1.234,
+				OrdinaryMemberFriendFee:  2.345,
+				AssociateMemberFee:       5.678,
+				AssocMemberIsFriend:      true,
+				AssociateMemberFriendFee: 6.789,
+			},
+			"1.23", "0.00", "0.00", "0.00", "0.00", "0.00", "1.23",
+		},
+		{
+			"ordinary member is friend",
+			MembershipSale{
+				OrdinaryMemberFee:       1.234,
+				OrdinaryMemberIsFriend:  true,
+				OrdinaryMemberFriendFee: 2.345,
+			},
+			"1.23", "2.35", "0.00", "0.00", "0.00", "0.00", "3.58",
+		},
+		{
+			"associate member",
+			MembershipSale{
+				OrdinaryMemberFee:        1.234,
+				OrdinaryMemberIsFriend:   false,
+				OrdinaryMemberFriendFee:  2.345,
+				AssociateMemberID:        1,
+				AssociateMemberFee:       5.678,
+				AssocMemberIsFriend:      false,
+				AssociateMemberFriendFee: 6.789,
+			},
+			"1.23", "0.00", "0.00", "0.00", "5.68", "0.00", "6.91",
+		},
+		{
+			"associate member who is friend",
+			MembershipSale{
+				OrdinaryMemberFee:        1.234,
+				OrdinaryMemberFriendFee:  2.345,
+				AssociateMemberID:        1,
+				AssociateMemberFee:       5.678,
+				AssocMemberIsFriend:      true,
+				AssociateMemberFriendFee: 6.789,
+			},
+			"1.23", "0.00", "0.00", "0.00", "5.68", "6.79", "13.70",
+		},
+	}
+
+	for _, td := range testData {
+
+		if td.wantOrdinaryMembershipFee != td.ms.OrdinaryMembershipFeeForDisplay() {
+			t.Errorf("%s: want ordinary member fee %s got %s",
+				td.description,
+				td.wantOrdinaryMembershipFee,
+				td.ms.OrdinaryMembershipFeeForDisplay())
+		}
+
+		if td.wantOrdinaryMemberFriendFee != td.ms.OrdinaryMemberFriendFeeForDisplay() {
+			t.Errorf("%s: want ordinary member friend fee %s got %s",
+				td.description,
+				td.wantOrdinaryMemberFriendFee,
+				td.ms.OrdinaryMemberFriendFeeForDisplay())
+		}
+
+		if td.wantDonationToSociety != td.ms.DonationToSocietyForDisplay() {
+			t.Errorf("%s: want donationToSociety %s got %s",
+				td.description,
+				td.wantDonationToSociety,
+				td.ms.DonationToSocietyForDisplay())
+		}
+
+		if td.wantOrdinaryMemberFriendFee != td.ms.OrdinaryMemberFriendFeeForDisplay() {
+			t.Errorf("%s: want ordinary member friend fee %s got %s",
+				td.description,
+				td.wantOrdinaryMemberFriendFee,
+				td.ms.OrdinaryMemberFriendFeeForDisplay())
+		}
+
+		if td.wantDonationToSociety != td.ms.DonationToSocietyForDisplay() {
+			t.Errorf("%s: want donation to society %s got %s",
+				td.description,
+				td.wantDonationToSociety,
+				td.ms.DonationToSocietyForDisplay())
+		}
+
+		if td.wantDonationToMuseum != td.ms.DonationToMuseumForDisplay() {
+			t.Errorf("%s: want donation to museum %s got %s",
+				td.description,
+				td.wantDonationToMuseum,
+				td.ms.DonationToMuseumForDisplay())
+		}
+
+		if td.wantAssociateFriendFee != td.ms.AssociateMemberFriendFeeForDisplay() {
+			t.Errorf("%s: want associate member friend fee %s got %s",
+				td.description,
+				td.wantAssociateFriendFee,
+				td.ms.AssociateMemberFriendFeeForDisplay())
+		}
+
+		if td.wantTotal != td.ms.TotalPaymentForDisplay() {
+			t.Errorf("%s: want total %s got %s",
+				td.description,
+				td.wantTotal,
+				td.ms.TotalPaymentForDisplay())
+		}
+	}
+}
