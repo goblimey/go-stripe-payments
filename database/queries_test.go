@@ -378,7 +378,7 @@ func TestSetDateLastPaid(t *testing.T) {
 		}
 
 		london, _ := time.LoadLocation("Europe/London")
-		tm := time.Date(2024, time.February, 14, 0, 0, 0, 0, london)
+		tm := time.Date(2024, time.February, 14, 1, 2, 3, 4, london)
 
 		setError := db.SetDateLastPaid(userID, tm)
 		if setError != nil {
@@ -401,12 +401,8 @@ func TestSetDateLastPaid(t *testing.T) {
 
 		// SQLite and postgres provide the resulting date/time value in slightly
 		// different formats.
-		var want string
-		if db.Type == "sqlite" {
-			want = "2024-02-14 00:00:00"
-		} else {
-			want = "2024-02-14 00:00:00+00"
-		}
+		const want = "2024-02-14"
+
 		if want != got {
 			t.Errorf("%s: want %s got %s", dbType, want, got)
 			break
@@ -1025,6 +1021,68 @@ func TestMembershipSalesDisplays(t *testing.T) {
 				td.description,
 				td.wantTotal,
 				td.ms.TotalPaymentForDisplay())
+		}
+	}
+}
+
+// TestSetTimeFieldInUserData check SetTimeFieldInUserData.
+func TestSetTimeFieldInUserData(t *testing.T) {
+
+	for _, dbType := range databaseList {
+
+		db, connError := SetupDBForTesting(dbType)
+
+		if connError != nil {
+			t.Error(connError)
+			return
+		}
+
+		defer db.Close()
+
+		fieldID, fieldError := db.getFieldIDOnce("DATE_LAST_PAID", &db.dateLastPaidID)
+		if fieldError != nil {
+			t.Error(fieldError)
+			return
+		}
+
+		utc, _ := time.LoadLocation("UTC")
+		d := time.Date(2025, time.February, 14, 1, 2, 3, 4, utc)
+
+		const wantPostgres = "2025-02-14 01:02:03+00"
+		const wantSQLite = "2025-02-14 01:02:03"
+
+		var userID int
+		var want string
+		if db.Type == "sqlite" {
+			userID = TestUserIDSQLite
+			want = wantSQLite
+		} else {
+			userID = TestUserIDPostgres
+			want = wantPostgres
+		}
+
+		setError := db.SetTimeFieldInUserData(fieldID, userID, d)
+
+		if setError != nil {
+			t.Error(setError)
+			return
+		}
+
+		// Fetch the value back and check it.
+		sql := `
+			select usd_value from adm_user_data 
+			where usd_usr_id = $1
+			and usd_usf_id = $2;
+		`
+		var got string
+		fetchError := db.QueryRow(sql, userID, fieldID).Scan(&got)
+		if fetchError != nil {
+			t.Error(fetchError)
+		}
+
+		if want != got {
+			t.Errorf("want %s got %s", want, got)
+			return
 		}
 	}
 }

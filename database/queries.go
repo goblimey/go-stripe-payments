@@ -694,7 +694,7 @@ func (db *Database) SetDateLastPaid(userID int, d time.Time) error {
 		return fieldError
 	}
 
-	return db.SetTimeFieldInUserData(fieldID, userID, d)
+	return db.SetDateFieldInUserData(fieldID, userID, d)
 }
 
 // SetFriendField sets the friend of the museum field for the user in
@@ -899,6 +899,58 @@ func (db *Database) GetUserDataIntField(fieldID, userID int) (int, error) {
 	}
 
 	return fetchedValue, nil
+}
+
+// SetDateFieldInUserData sets the field with ID fieldID in adm_user_data to an
+// date value, eg '2025-10-30'.
+func (db *Database) SetDateFieldInUserData(fieldID, userID int, t time.Time) error {
+
+	f := "SetDateFieldInUserData"
+
+	dateStr := t.Format("2006-01-02")
+
+	// Neither Postgres nor SQLite support rowsAffected.  Use RETURNING.
+	var sqlCommand string
+
+	if db.FieldSet(fieldID, userID) {
+		// There is already a record for this field.  Update it.
+		sqlCommand = `
+			UPDATE adm_user_data
+			SET usd_value = $1
+			WHERE usd_usr_id = $2
+			AND usd_usf_id = $3
+			RETURNING usd_usr_id;
+		`
+	} else {
+
+		// There is no record for this field.  Create and set it.
+		sqlCommand = `
+			INSERT INTO adm_user_data(usd_value, usd_usr_id, usd_usf_id)
+			VALUES ($1, $2, $3)
+			RETURNING usd_usr_id;
+		`
+	}
+
+	var returnedID int
+
+	execAndScanError := db.QueryRow(sqlCommand, dateStr, userID, fieldID).Scan(&returnedID)
+	if execAndScanError != nil {
+		em := fmt.Sprintf("%s: %v", f, execAndScanError)
+		return errors.New(em)
+	}
+
+	if returnedID == 0 {
+		em := fmt.Sprintf("%s: ID zero returned updating ID %d", f, userID)
+		return errors.New(em)
+	}
+
+	if returnedID != userID {
+		em := fmt.Sprintf("%s: updating ID %d, got ID %d  back",
+			f, userID, returnedID)
+		return errors.New(em)
+	}
+
+	return nil
 }
 
 // SetTimeFieldInUserData sets the field with ID fieldID in adm_user_data to an
