@@ -4,20 +4,22 @@
 -- Name: membership_sales; Type: TABLE; Schema: public; Owner: postgres
 --
 
-IF 
-
-CREATE TABLE public.membership_sales
+CREATE TABLE public.membership_sales IF NOT EXISTS
 (
     ms_id integer NOT NULL,
     ms_payment_service CHARACTER VARYING(36) NOT NULL,
     ms_payment_status CHARACTER VARYING(20) NOT NULL,
     ms_payment_id CHARACTER VARYING(200),
+    ms_transaction_type varchar(30) NOT NULL DEFAULT 'membership renewal',
     ms_membership_year integer NOT NULL,
     ms_usr1_id integer NOT NULL,
     ms_usr1_fee REAL NOT NULL,
     ms_usr1_friend boolean NOT NULL DEFAULT false,
     -- 0.0 if not a friend.
     ms_usr1_friend_fee REAL NOT NULL default 0.0,
+    ms_usr1_first_name varchar (50),
+    ms_usr1_last_name varchar (50),
+    ms_user1_email varchar (50),
     -- 0 if no associate
     ms_usr2_id integer DEFAULT NULL,
     -- 0.0 if no associate
@@ -26,6 +28,9 @@ CREATE TABLE public.membership_sales
     ms_usr2_friend boolean NOT NULL DEFAULT false,
     -- 0.0 if no associate.
     ms_usr2_friend_fee REAL NOT NULL DEFAULT 0.0,
+    ms_usr2_first_name varchar (50),
+    ms_usr2_last_name varchar(50)
+    ms_usr2_email varchar (50)
     -- 0.0 if no donation.
     ms_donation REAL NOT NULL DEFAULT 0.0,
     -- 0.0 if no donation to museum.
@@ -33,6 +38,8 @@ CREATE TABLE public.membership_sales
     ms_giftaid boolean NOT NULL DEFAULT false,
     timestamp_create timestamp
     without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP 
+
+
 );
 
     ALTER TABLE public.membership_sales OWNER TO postgres;

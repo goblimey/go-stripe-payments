@@ -79,6 +79,440 @@ func TestClose(t *testing.T) {
 	}
 }
 
+func TestGetMemberRole(t *testing.T) {
+	db, connError := SetupDBForTesting("sqlite")
+
+	if connError != nil {
+		t.Error(connError)
+		return
+	}
+
+	db.BeginTx()
+
+	defer db.Rollback()
+	defer db.Close()
+
+	got, err := db.getIDOfMemberRole()
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	if got <= 0 {
+		t.Errorf("want ID greater than 0, got %d", got)
+	}
+}
+
+func TestCreateUser(t *testing.T) {
+	for _, dbType := range databaseList {
+		db, connError := SetupDBForTesting(dbType)
+
+		if connError != nil {
+			t.Error(connError)
+			return
+		}
+
+		db.BeginTx()
+
+		defer db.Rollback()
+		defer db.Close()
+
+		const want = "foo"
+
+		got, createError := db.CreateUser(want)
+
+		if createError != nil {
+			t.Errorf("%s: %v", dbType, createError)
+			return
+		}
+
+		if got.ID == 0 {
+			t.Error("expected ID to be non-zero")
+		}
+
+		if want != got.LoginName {
+			t.Errorf("want %s got %s", want, got.LoginName)
+		}
+
+		deleteError := db.DeleteUser(got)
+
+		if deleteError != nil {
+			t.Error(deleteError)
+		}
+
+		// Expect the ID of the user object to be 0 after the
+		// database record has been deleted.
+		if got.ID != 0 {
+			t.Errorf("want ID of 0 got %d", got.ID)
+		}
+	}
+}
+
+func TestCreateMember(t *testing.T) {
+	for _, dbType := range databaseList {
+
+		db, connError := SetupDBForTesting(dbType)
+
+		if connError != nil {
+			t.Error(connError)
+			return
+		}
+
+		db.BeginTx()
+
+		defer db.Rollback()
+		defer db.Close()
+
+		var wantUserID int
+		switch dbType {
+		case "postgres":
+			wantUserID = TestUserIDPostgres
+		default:
+			wantUserID = TestUserIDSQLite
+		}
+
+		const wantStartDate = "1970-01-01"
+		const wantEndDate = "2025-12-31"
+		got, err := db.CreateMember(wantUserID, wantStartDate, wantEndDate)
+
+		if err != nil {
+			t.Error(err)
+			return
+		}
+
+		if got.ID == 0 {
+			t.Error("expected ID to be non-zero")
+		}
+
+		if wantUserID != got.UserID {
+			t.Errorf("want %d got %d", wantUserID, got.UserID)
+		}
+
+		if wantStartDate != got.StartDate {
+			t.Errorf("want %s got %s", wantStartDate, got.StartDate)
+		}
+
+		if wantEndDate != got.EndDate {
+			t.Errorf("want %s got %s", wantEndDate, got.EndDate)
+		}
+
+		// Tidy up.
+		deleteError := db.DeleteMember(got)
+		if deleteError != nil {
+			t.Error(deleteError)
+		}
+
+		// Expect the ID of the member object to be 0 after the
+		// database record has been deleted.
+		if got.ID != 0 {
+			t.Errorf("want ID of 0 got %d", got.ID)
+		}
+	}
+}
+
+func TestGetLoginNames(t *testing.T) {
+	var testData = []struct {
+		description              string
+		sale                     MembershipSale
+		wantLen                  int
+		wantOrdinaryAccountName  string
+		wantAssociateAccountName string
+	}{
+		{
+			"ordinary member and associate without email",
+			MembershipSale{
+				OrdinaryMemberEmail:      "foo@example.com",
+				AssociateMemberID:        42,
+				AssociateMemberFirstName: "Fred",
+				AssociateMemberLastName:  "Smith",
+			},
+			2,
+			"foo@example.com",
+			"Fred.Smith",
+		},
+		{
+			"ordinary member only",
+			MembershipSale{
+				OrdinaryMemberEmail: "foo@example.com",
+			},
+			1,
+			"foo@example.com",
+			"",
+		},
+		{
+			"ordinary member and associate with email",
+			MembershipSale{
+				AssociateMemberID:    1,
+				OrdinaryMemberEmail:  "foo@example.com",
+				AssociateMemberEmail: "bar@example.com",
+			},
+			2,
+			"foo@example.com",
+			"bar@example.com",
+		},
+		{
+			"ordinary member and associate without email",
+			MembershipSale{
+				AssociateMemberID:        42,
+				OrdinaryMemberEmail:      "foo@example.com",
+				AssociateMemberFirstName: "Fred",
+				AssociateMemberLastName:  "Smith",
+			},
+			2,
+			"foo@example.com",
+			"Fred.Smith",
+		},
+	}
+
+	for _, td := range testData {
+
+		name := getLoginNames(&td.sale)
+
+		if td.wantLen != len(name) {
+			t.Errorf("%s: want %d got %d",
+				td.description, td.wantLen, len(name))
+		}
+
+		if td.wantOrdinaryAccountName != name[0] {
+			t.Errorf("%s: want %s got %s",
+				td.description, td.wantOrdinaryAccountName, name[0])
+		}
+
+		if len(name) > 1 {
+
+			if td.wantAssociateAccountName != name[1] {
+				t.Errorf("%s: want %s got %s",
+					td.description, td.wantOrdinaryAccountName, name[1])
+			}
+
+			if len(name) != 2 {
+				t.Errorf("%s: want 2 got %d",
+					td.description, len(name))
+			}
+		}
+	}
+}
+
+// TestCreateAccounts checks CreateAccounts
+func TestCreateAccounts(t *testing.T) {
+
+	// PaymentService
+	// PaymentStatus
+	// PaymentID
+	// TransactionType
+	// MembershipYear
+	// OrdinaryMemberID
+	// OrdinaryMemberFee
+	// OrdinaryMemberIsFriend
+	// OrdinaryMemberFriendFee
+	// OrdinaryMemberFirstName
+	// OrdinaryMemberLastName
+	// OrdinaryMemberEmail
+	// DonationToSociety
+	// DonationToMuseum
+	// Giftaid
+	// AssociateMemberID
+	// AssociateMemberFee
+	// AssocMemberIsFriend
+	// AssociateMemberFriendFee
+	// AssociateMemberLastName
+	// AssociateMemberEmail
+
+	const wantPassword = "*LK*"
+
+	var testData = []struct {
+		description              string
+		now                      time.Time // This controls the start date of the new member.
+		sale                     MembershipSale
+		wantOrdinaryAccountName  string
+		wantStartDate            string
+		wantEndDate              string
+		wantAssociateAccountName string
+	}{
+		{
+			"ordinary member only",
+			time.Date(2024, time.October, 1, 12, 35, 15, 0, time.UTC),
+			MembershipSale{
+				TransactionType:     TransactionTypeNewMember,
+				MembershipYear:      2025,
+				OrdinaryMemberEmail: "foo@example.com",
+			},
+			"foo@example.com",
+			"2024-10-01",
+			"2025-12-31",
+			"",
+		},
+		{
+			"ordinary member and associate with email",
+			time.Date(2024, time.July, 4, 8, 9, 10, 0, time.UTC),
+			MembershipSale{
+				TransactionType:      TransactionTypeNewMember,
+				MembershipYear:       2024,
+				AssociateMemberID:    42,
+				OrdinaryMemberEmail:  "foo@example.com",
+				AssociateMemberEmail: "bar@example.com",
+			},
+			"foo@example.com",
+			"2024-07-04",
+			"2024-12-31",
+			"bar@example.com",
+		},
+		{
+			"ordinary member and associate without email",
+			time.Date(2025, time.February, 14, 12, 35, 15, 0, time.UTC),
+			MembershipSale{
+				TransactionType:          TransactionTypeNewMember,
+				MembershipYear:           2025,
+				OrdinaryMemberEmail:      "foo@example.com",
+				AssociateMemberID:        4,
+				AssociateMemberFirstName: "Fred",
+				AssociateMemberLastName:  "Smith",
+			},
+			"foo@example.com",
+			"2025-02-14",
+			"2025-12-31",
+			"Fred.Smith",
+		},
+	}
+
+	for _, td := range testData {
+		// CreateAccounts calls other functions to
+		// do the work and they are tested with
+		// Postgres.  So we can test this only using
+		// SQLite.  We can also just create and then
+		// roll back.
+		db, connError := SetupDBForTesting("sqlite")
+
+		if connError != nil {
+			t.Error(connError)
+			return
+		}
+
+		db.BeginTx()
+
+		defer db.Rollback()
+		defer db.Close()
+
+		u1, u2, createError := db.CreateAccounts(&td.sale, td.now)
+		if createError != nil {
+			t.Errorf("%s: %v", td.description, createError)
+		}
+
+		// Check that the database records have been created, for each
+		// member: an adm_user record, an adm_member record and an
+		// adm_user_data record with field name 'DATE_LAST_PAID' and
+		// containing the given time in the format 'YYYY-MM-DD'
+
+		user1, fetchUser1Error := db.GetUser(u1)
+		if fetchUser1Error != nil {
+			t.Errorf("%s: %v", td.description, fetchUser1Error)
+		}
+
+		// We don't know what the uuid is supposed to be so we can only check that
+		// there is one.
+		if len(user1.UUID) == 0 {
+			t.Error("uuid is empty")
+		}
+
+		if td.wantOrdinaryAccountName != user1.LoginName {
+			t.Errorf("%s: want %s got %s",
+				td.description, td.wantOrdinaryAccountName, user1.LoginName)
+		}
+
+		if wantPassword != user1.Password {
+			t.Errorf("%s: want %s got %s",
+				td.description, wantPassword, user1.Password)
+		}
+
+		if !user1.Valid {
+			t.Errorf("%s: want valid", td.description)
+		}
+
+		member1, fetchMemberError := db.GetMemberOfUser(user1.ID)
+		if fetchMemberError != nil {
+			t.Error(fetchMemberError)
+		}
+
+		if member1.ID <= 0 {
+			t.Errorf("%s: want ID > 0: %d", td.description, member1.ID)
+		}
+
+		if len(member1.UUID) == 0 {
+			t.Error("uuid is empty")
+		}
+
+		if user1.ID != member1.UserID {
+			t.Errorf("%s: want %d got %d",
+				td.description, user1.ID, member1.UserID)
+		}
+
+		if td.wantStartDate != member1.StartDate {
+			t.Errorf("%s: want %s got %s",
+				td.description, td.wantStartDate, member1.StartDate)
+		}
+
+		if td.wantEndDate != member1.EndDate {
+			t.Errorf("%s: want %s got %s",
+				td.description, td.wantEndDate, member1.EndDate)
+		}
+
+		if td.sale.AssociateMemberID != 0 {
+
+			user2, fetchUser2Error := db.GetUser(u2)
+
+			if fetchUser2Error != nil {
+				t.Errorf("%s: %v", td.description, fetchUser2Error)
+			}
+
+			// We don't know what the uuid is supposed to be so we can only check that
+			// there is one.
+			if len(user2.UUID) == 0 {
+				t.Error("uuid is empty")
+			}
+
+			if td.wantAssociateAccountName != user2.LoginName {
+				t.Errorf("%s: want %s got %s",
+					td.description, td.wantAssociateAccountName, user2.LoginName)
+			}
+
+			if wantPassword != user2.Password {
+				t.Errorf("%s: want %s got %s",
+					td.description, wantPassword, user2.Password)
+			}
+
+			if !user2.Valid {
+				t.Errorf("%s: want valid", td.description)
+			}
+		}
+
+		fieldID, fieldError := db.getFieldID("DATE_LAST_PAID")
+		if fieldError != nil {
+			t.Error(fieldError)
+		}
+
+		sql := `
+			SELECT usd_value
+			FROM adm_user_data
+			WHERE usd_usr_id = $2
+			AND usd_usf_id = $3;
+		`
+		var dateLastPaid string
+
+		fetchDateError := db.QueryRow(sql, user1.ID, fieldID).Scan(&dateLastPaid)
+		if fetchDateError != nil {
+			t.Error(fetchDateError)
+		}
+
+		if td.wantStartDate != dateLastPaid {
+			t.Errorf("%s: want %s got %s",
+				td.description, td.wantStartDate, dateLastPaid)
+		}
+
+		// Done.
+		db.Rollback()
+	}
+}
+
 // TestGetFieldID tests getFieldID.
 func TestGetFieldID(t *testing.T) {
 
@@ -100,6 +534,13 @@ func TestGetFieldID(t *testing.T) {
 				return
 			}
 
+			txError := db.BeginTx()
+			if txError != nil {
+				t.Error(txError)
+				return
+			}
+
+			defer db.Rollback()
 			defer db.Close()
 
 			gotID, gotErr := db.getFieldID(td.fieldName)
@@ -127,6 +568,13 @@ func TestGetFirstNameID(t *testing.T) {
 			return
 		}
 
+		txError := db.BeginTx()
+		if txError != nil {
+			t.Error(txError)
+			return
+		}
+
+		defer db.Rollback()
 		defer db.Close()
 
 		gotID, gotErr := db.getFirstNameID()
@@ -153,6 +601,13 @@ func TestGetLastNameID(t *testing.T) {
 			return
 		}
 
+		txError := db.BeginTx()
+		if txError != nil {
+			t.Error(txError)
+			return
+		}
+
+		defer db.Rollback()
 		defer db.Close()
 
 		gotID, gotErr := db.getLastNameID()
@@ -179,6 +634,13 @@ func TestGetEmailID(t *testing.T) {
 			return
 		}
 
+		txError := db.BeginTx()
+		if txError != nil {
+			t.Error(txError)
+			return
+		}
+
+		defer db.Rollback()
 		defer db.Close()
 
 		gotID, gotErr := db.getEmailID()
@@ -205,6 +667,13 @@ func TestGetGiftaidID(t *testing.T) {
 			return
 		}
 
+		txError := db.BeginTx()
+		if txError != nil {
+			t.Error(txError)
+			return
+		}
+
+		defer db.Rollback()
 		defer db.Close()
 
 		gotID, gotErr := db.getGiftaidID()
@@ -231,6 +700,13 @@ func TestMemberExists(t *testing.T) {
 			return
 		}
 
+		txError := db.BeginTx()
+		if txError != nil {
+			t.Error(txError)
+			return
+		}
+
+		defer db.Rollback()
 		defer db.Close()
 
 		id, searchErr := db.GetUserIDofMember("luiGi", "SchmidT", "Foo@bar.com")
@@ -255,6 +731,12 @@ func TestMemberExistsSQLite(t *testing.T) {
 		return
 	}
 
+	txError := db.BeginTx()
+	if txError != nil {
+		t.Error(txError)
+		return
+	}
+	defer db.Rollback()
 	defer db.Close()
 
 	var testData = []struct {
@@ -302,6 +784,12 @@ func TestSetLastPayment(t *testing.T) {
 			return
 		}
 
+		txError := db.BeginTx()
+		if txError != nil {
+			t.Error(txError)
+			return
+		}
+		defer db.Rollback()
 		defer db.Close()
 
 		userID, searchErr := db.GetUserIDofMember("luiGi", "SchmidT", "Foo@bar.com")
@@ -316,6 +804,59 @@ func TestSetLastPayment(t *testing.T) {
 	}
 }
 
+// TestSetEmailField checks SetEmailField.
+func TestSetEmailField(t *testing.T) {
+
+	for _, dbType := range databaseList {
+
+		db, connError := SetupDBForTesting(dbType)
+
+		if connError != nil {
+			t.Error(connError)
+			return
+		}
+
+		txError := db.BeginTx()
+
+		if txError != nil {
+			t.Error(txError)
+			return
+		}
+
+		defer db.Rollback()
+		defer db.Close()
+
+		userID, searchErr := db.GetUserIDofMember("luiGi", "SchmidT", "Foo@bar.com")
+		if searchErr != nil {
+			t.Error(" - expected Schmidt to exist")
+		}
+
+		const want = "foo"
+
+		err := db.SetEmailField(userID, want)
+		if err != nil {
+			t.Error(err)
+		}
+
+		fieldID, fieldError := db.getEmailID()
+		if fieldError != nil {
+			t.Error(fieldError)
+			return
+		}
+
+		got, fetchError := GetUserDataField[string](db, fieldID, userID)
+		if fetchError != nil {
+			t.Error(fetchError)
+			return
+		}
+
+		if want != got {
+			t.Errorf("%s: want %s got %s", dbType, want, got)
+			return
+		}
+	}
+}
+
 // TestSetMembersAtAddress checks SetMembersAtAddress.
 func TestSetMembersAtAddress(t *testing.T) {
 
@@ -324,36 +865,53 @@ func TestSetMembersAtAddress(t *testing.T) {
 		db, connError := SetupDBForTesting(dbType)
 
 		if connError != nil {
-			t.Error(connError)
+			t.Errorf("%s: %v", dbType, connError)
 			break
 		}
 
+		txError := db.BeginTx()
+		if txError != nil {
+			t.Errorf("%s: %v", dbType, txError)
+			break
+		}
+		defer db.Rollback()
 		defer db.Close()
 
 		userID, searchErr := db.GetUserIDofMember("luiGi", "SchmidT", "Foo@bar.com")
 		// userID, searchErr := db.GetUserIDofMember("simon", "ritchie", "simonritchie.uk@gmail.com")
 		if searchErr != nil {
 			t.Error(" - expected Schmidt to exist")
+			break
 		}
 
 		const want = 5
 		setError := db.SetMembersAtAddress(userID, want)
 		if setError != nil {
-			t.Error(setError)
+			t.Errorf("%s: %v", dbType, setError)
+			break
 		}
 
-		const sql = `select usd_value from adm_user_data
-		where usd_usr_id = $1
-		AND usd_usf_id = $2`
+		const sql = `
+			select usd_value from adm_user_data
+			where usd_usr_id = $1
+			AND usd_usf_id = $2
+		`
+
+		id, fetchIDError := db.getMembersAtAddressID()
+		if fetchIDError != nil {
+			t.Errorf("%s: %v", dbType, fetchIDError)
+			break
+		}
+
 		var got int
-		err := db.QueryRow(sql, userID, db.membersAtAddressID).Scan(&got)
+		err := db.QueryRow(sql, userID, id).Scan(&got)
 		if err != nil {
-			t.Error(err)
+			t.Errorf("%s %v", dbType, err)
 			break
 		}
 
 		if want != got {
-			t.Errorf("want %d got %d", want, got)
+			t.Errorf("%s: want %d got %d", dbType, want, got)
 			break
 		}
 	}
@@ -370,6 +928,12 @@ func TestSetDateLastPaid(t *testing.T) {
 			break
 		}
 
+		txError := db.BeginTx()
+		if txError != nil {
+			t.Error(txError)
+			return
+		}
+		defer db.Rollback()
 		defer db.Close()
 
 		userID, searchErr := db.GetUserIDofMember("luiGi", "SchmidT", "Foo@bar.com")
@@ -392,8 +956,14 @@ func TestSetDateLastPaid(t *testing.T) {
 				where usd_usr_id = $1
 				AND usd_usf_id = $2`
 
+		id, fieldError := db.getFieldID("DATE_LAST_PAID")
+		if fieldError != nil {
+			t.Errorf("%s: %v", dbType, fieldError)
+			break
+		}
+
 		var got string
-		queryAndScanError := db.QueryRow(sqlCommand, userID, db.dateLastPaidID).Scan(&got)
+		queryAndScanError := db.QueryRow(sqlCommand, userID, id).Scan(&got)
 		if queryAndScanError != nil {
 			t.Errorf("%s: %v", dbType, queryAndScanError)
 			break
@@ -421,6 +991,12 @@ func TestSetFriendField(t *testing.T) {
 			return
 		}
 
+		txError := db.BeginTx()
+		if txError != nil {
+			t.Error(txError)
+			return
+		}
+		defer db.Rollback()
 		defer db.Close()
 
 		userID, searchErr := db.GetUserIDofMember("luiGi", "SchmidT", "Foo@bar.com")
@@ -447,6 +1023,12 @@ func TestSetMemberEndDate(t *testing.T) {
 			return
 		}
 
+		txError := db.BeginTx()
+		if txError != nil {
+			t.Error(txError)
+			return
+		}
+		defer db.Rollback()
 		defer db.Close()
 
 		var userID int
@@ -480,6 +1062,12 @@ func TestSetGiftaidField(t *testing.T) {
 			return
 		}
 
+		txError := db.BeginTx()
+		if txError != nil {
+			t.Error(txError)
+			return
+		}
+		defer db.Rollback()
 		defer db.Close()
 
 		giftaidID, fetchIDErr := db.getGiftaidID()
@@ -554,6 +1142,12 @@ func TestMembershipSale(t *testing.T) {
 		return
 	}
 
+	txError := db.BeginTx()
+	if txError != nil {
+		t.Error(txError)
+		return
+	}
+	defer db.Rollback()
 	defer db.Close()
 
 	var testData = []struct {
@@ -561,6 +1155,26 @@ func TestMembershipSale(t *testing.T) {
 		input       MembershipSale
 		want        MembershipSale
 	}{
+		{
+			"no associate, no donations",
+			MembershipSale{
+				ID: 0, PaymentService: "f", PaymentStatus: "g", PaymentID: "h",
+				MembershipYear: 2025, OrdinaryMemberID: TestUserIDPostgres,
+				OrdinaryMemberFee:      24.0,
+				OrdinaryMemberIsFriend: true, OrdinaryMemberFriendFee: 5, Giftaid: true,
+				AssociateMemberID: 0, AssociateMemberFee: 42.0,
+				AssocMemberIsFriend: true, AssociateMemberFriendFee: 43.0,
+			},
+			MembershipSale{
+				ID: 0, PaymentService: "f", PaymentStatus: "g", PaymentID: "h",
+				MembershipYear: 2025, OrdinaryMemberID: TestUserIDPostgres,
+				OrdinaryMemberFee:      24.0,
+				OrdinaryMemberIsFriend: true, OrdinaryMemberFriendFee: 5, DonationToSociety: 0,
+				DonationToMuseum: 0, Giftaid: true,
+				AssociateMemberID: 0, AssociateMemberFee: 0,
+				AssocMemberIsFriend: false, AssociateMemberFriendFee: 0,
+			},
+		},
 		{
 			"no associate",
 			MembershipSale{
@@ -710,7 +1324,7 @@ func TestMembershipSale(t *testing.T) {
 	for _, td := range testData {
 		id, createError := td.input.Create(db)
 		if createError != nil {
-			t.Error(td.description + ": " + createError.Error())
+			t.Errorf("postgres: %s %v", td.description, createError.Error())
 			break
 		}
 
@@ -742,6 +1356,9 @@ func TestMembershipSale(t *testing.T) {
 		const wantPaymentID = "some very long text"
 		const wantPaymentStatus = "complete"
 
+		td.want.PaymentID = wantPaymentID
+		td.want.PaymentStatus = wantPaymentStatus
+
 		updateError := got.Update(db, wantPaymentStatus, wantPaymentID)
 		if updateError != nil {
 			t.Errorf("%s: %v", td.description, updateError)
@@ -753,9 +1370,6 @@ func TestMembershipSale(t *testing.T) {
 			t.Errorf("%s: %v", td.description, fetchError)
 			break
 		}
-
-		td.want.PaymentID = wantPaymentID
-		td.want.PaymentStatus = wantPaymentStatus
 
 		if td.want != *updatedMS {
 			t.Errorf("%s\nwant %v\ngot  %v", td.description, td.want, *updatedMS)
@@ -805,6 +1419,12 @@ func TestMembershipSaleUpdateFailure(t *testing.T) {
 		return
 	}
 
+	txError := db.BeginTx()
+	if txError != nil {
+		t.Error(txError)
+		return
+	}
+	defer db.Rollback()
 	defer db.Close()
 
 	sale := MembershipSale{
@@ -1037,9 +1657,15 @@ func TestSetTimeFieldInUserData(t *testing.T) {
 			return
 		}
 
+		txError := db.BeginTx()
+		if txError != nil {
+			t.Error(txError)
+			return
+		}
+		defer db.Rollback()
 		defer db.Close()
 
-		fieldID, fieldError := db.getFieldIDOnce("DATE_LAST_PAID", &db.dateLastPaidID)
+		fieldID, fieldError := db.getFieldID("DATE_LAST_PAID")
 		if fieldError != nil {
 			t.Error(fieldError)
 			return

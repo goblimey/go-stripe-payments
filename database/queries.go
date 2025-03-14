@@ -1,14 +1,20 @@
 package database
 
 import (
-	// database/sql is imported by database.go.
 	"database/sql"
 	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
 	"time"
+
+	"github.com/google/uuid"
 )
+
+// values for the ms_transaction_type field of the membershipsale database
+// table.
+const TransactionTypeNewMember = "new member"
+const TransactionTypeRenewal = "membership renewal"
 
 var regExpForPostgresParamsToSQLiteParams *regexp.Regexp
 
@@ -19,6 +25,163 @@ func init() {
 	regExpForPostgresParamsToSQLiteParams = regexp.MustCompile(`\$[0-9]+`)
 }
 
+// Role holds the data about a role in the adm_roles table.  The roles
+// are already created.  The adm_roles table has a lot of fields but we
+// can ignore most of them.  We only need the rol_id and the rol_name
+// fields.
+type Role struct {
+	ID   int64  `json:"rol_id"`
+	Name string `json:"rol_name"`
+}
+
+/*
+CREATE TABLE public.adm_roles (
+    rol_id integer NOT NULL,
+    rol_cat_id integer NOT NULL,
+    rol_lst_id integer,
+    rol_uuid character varying(36) NOT NULL,
+    rol_name character varying(100) NOT NULL,
+    rol_description character varying(4000),
+    rol_assign_roles boolean DEFAULT false NOT NULL,
+    rol_approve_users boolean DEFAULT false NOT NULL,
+    rol_announcements boolean DEFAULT false NOT NULL,
+    rol_events boolean DEFAULT false NOT NULL,
+    rol_documents_files boolean DEFAULT false NOT NULL,
+    rol_edit_user boolean DEFAULT false NOT NULL,
+    rol_guestbook boolean DEFAULT false NOT NULL,
+    rol_guestbook_comments boolean DEFAULT false NOT NULL,
+    rol_mail_to_all boolean DEFAULT false NOT NULL,
+    rol_mail_this_role smallint DEFAULT 0 NOT NULL,
+    rol_photo boolean DEFAULT false NOT NULL,
+    rol_profile boolean DEFAULT false NOT NULL,
+    rol_weblinks boolean DEFAULT false NOT NULL,
+    rol_all_lists_view boolean DEFAULT false NOT NULL,
+    rol_default_registration boolean DEFAULT false NOT NULL,
+    rol_leader_rights smallint DEFAULT 0 NOT NULL,
+    rol_view_memberships smallint DEFAULT 0 NOT NULL,
+    rol_view_members_profiles smallint DEFAULT 0 NOT NULL,
+    rol_start_date date,
+    rol_start_time time without time zone,
+    rol_end_date date,
+    rol_end_time time without time zone,
+    rol_weekday smallint,
+    rol_location character varying(100),
+    rol_max_members integer,
+    rol_cost double precision,
+    rol_cost_period smallint,
+    rol_usr_id_create integer,
+    rol_timestamp_create timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    rol_usr_id_change integer,
+    rol_timestamp_change timestamp without time zone,
+    rol_valid boolean DEFAULT true NOT NULL,
+    rol_system boolean DEFAULT false NOT NULL,
+    rol_administrator boolean DEFAULT false NOT NULL
+);
+*/
+
+// User holds the contents of a row from the adm_users table.
+type User struct {
+	ID                    int       `json:"usr_id"`
+	UUID                  string    `json:"usr_uuid"`
+	LoginName             string    `json:"usr_login_name"`
+	Password              string    `json:"usr_password"`
+	Photo                 []byte    `json:"usr_photo"`
+	Text                  string    `json:"usr_text"`
+	PasswordResetID       string    `json:"usr_pw_reset_id"`
+	PasswordRestTimestamp time.Time `json:"usr_pw_reset_timestamp"`
+	LastLogin             time.Time `json:"usr_last_login"`
+	ActualLogin           time.Time `json:"usr_actual_login"`
+	NumberLogin           int       `json:"usr_number_login"`
+	DateInvalid           time.Time `json:"usr_date_invalid"`
+	NumberInvalid         int       `json:"usr_number_invalid"`
+	IDCreate              int       `json:"usr_usr_id_create"`
+	TimeStampCreate       time.Time `json:"usr_timestamp_create"`
+	IDChange              int       `json:"usr_usr_id_change"`
+	TimestampChange       time.Time `json:"usr_timestamp_change"`
+	Valid                 bool      `json:"usr_valid"`
+}
+
+func NewUser(loginName string) *User {
+	u := User{
+		LoginName: loginName,
+	}
+
+	return &u
+}
+
+func (db *Database) DeleteUser(u *User) error {
+	sql := `
+		DELETE FROM adm_users
+		WHERE usr_id = $1
+		RETURNING usr_id;
+	`
+
+	var usr_id int
+
+	err := db.QueryRow(sql, u.ID).Scan(&usr_id)
+
+	if err != nil {
+		msg := fmt.Sprintf("DeleteUser: error deleting user with ID %d", u.ID)
+		return errors.New(msg)
+	}
+	if usr_id != u.ID {
+		msg := fmt.Sprintf("DeleteUser: returned ID %d not %d", usr_id, u.ID)
+		return errors.New(msg)
+	}
+
+	// Success!
+	u.ID = 0
+	return nil
+}
+
+// Member holds data from an adm_members record.  There are
+// many members for each user, one per role (Member, Admin etc)
+type Member struct {
+	ID        int    `json:"mem_id"`
+	UserID    int    `json:"mem_usr_id"`
+	RoleID    int    `json:"mem_rol_id"`
+	UUID      string `json:"mem_uuid"`
+	StartDate string `json:"mem_begin"`
+	EndDate   string `json:"mem_end"`
+	Approved  int    `json:"mem_approved"`
+}
+
+func NewMember(userID int, startDate, endDate string) *Member {
+
+	m := Member{
+		UserID:    userID,
+		StartDate: startDate,
+		EndDate:   endDate,
+	}
+
+	return &m
+}
+
+func (db *Database) DeleteMember(m *Member) error {
+	sql := `
+		DELETE FROM adm_members
+		WHERE mem_id = $1
+		RETURNING mem_id;
+	`
+
+	var mem_id int
+
+	err := db.QueryRow(sql, m.ID).Scan(&mem_id)
+
+	if err != nil {
+		msg := fmt.Sprintf("DeleteMember: error deleting member with ID %d", m.ID)
+		return errors.New(msg)
+	}
+	if mem_id == 1 {
+		msg := fmt.Sprintf("DeleteUser: returned ID %d not %d", mem_id, m.ID)
+		return errors.New(msg)
+	}
+
+	// Success!
+	m.ID = 0
+	return nil
+}
+
 // MembershipSale represents the payment of a membership sale - the annual
 // membership fee.
 type MembershipSale struct {
@@ -26,11 +189,15 @@ type MembershipSale struct {
 	PaymentService           string  // The payment processor eg "Stripe".
 	PaymentStatus            string  // "pending", "complete" or "cancelled"
 	PaymentID                string  // The transaction Id from the payment processor.
+	TransactionType          string  // The transaction type, eg 'membership renewal'
 	MembershipYear           int     // The membership year paid for.
 	OrdinaryMemberID         int     // The user ID of the member
 	OrdinaryMemberFee        float64 // The fee paid for ordinary membership.
 	OrdinaryMemberIsFriend   bool    // True if the ordinary member is a friend of the museum.
 	OrdinaryMemberFriendFee  float64 // The fee paid for the ordinary member to be a friend.
+	OrdinaryMemberFirstName  string  // First name (for new members)
+	OrdinaryMemberLastName   string  // Last name (for new members)
+	OrdinaryMemberEmail      string  // Email address (for new members)
 	DonationToSociety        float64 // donation to the society.
 	DonationToMuseum         float64 // donation to the museum.
 	Giftaid                  bool    // True if the member consents to Giftaid.
@@ -38,6 +205,9 @@ type MembershipSale struct {
 	AssociateMemberFee       float64 // the fee paid for associate membership.
 	AssocMemberIsFriend      bool    // True if the associate member is a friend of the museum.
 	AssociateMemberFriendFee float64 // The fee paid for associate member to be a fiend.
+	AssociateMemberFirstName string  // First name (for new members)
+	AssociateMemberLastName  string  // Last name (for new members)
+	AssociateMemberEmail     string  // Email address (for new members)
 }
 
 func NewMembershipSale(ordinaryMemberFee float64) *MembershipSale {
@@ -70,23 +240,30 @@ func (ms *MembershipSale) Create(db *Database) (int, error) {
 		ms_payment_service,
 		ms_payment_status,
 		ms_payment_id,
+		ms_transaction_type,
 		ms_membership_year,
 		ms_usr1_id,
 		ms_usr1_fee,
 		ms_usr1_friend,
 		ms_usr1_friend_fee,
+		ms_usr1_first_name,
+		ms_usr1_last_name,
+		ms_usr1_email,
 		ms_usr2_id,
 		ms_usr2_fee,
 		ms_usr2_friend,
 		ms_usr2_friend_fee,
+		ms_usr2_first_name,
+		ms_usr2_last_name,
+		ms_usr2_email,
 		ms_donation,
 		ms_donation_museum,
 		ms_giftaid
 	) 
-	Values
+	VALUES
 	(
 	 	nextval('membership_sales_ms_id_seq'), 
-	 	$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+	 	$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
 	)
 	RETURNING ms_id;
 	`
@@ -95,15 +272,22 @@ func (ms *MembershipSale) Create(db *Database) (int, error) {
 			ms.PaymentService,
 			ms.PaymentStatus,
 			ms.PaymentID,
+			ms.TransactionType,
 			ms.MembershipYear,
 			ms.OrdinaryMemberID,
 			ms.OrdinaryMemberFee,
 			ms.OrdinaryMemberIsFriend,
 			ms.OrdinaryMemberFriendFee,
+			ms.OrdinaryMemberFirstName,
+			ms.OrdinaryMemberLastName,
+			ms.OrdinaryMemberEmail,
 			ms.AssociateMemberID,
 			ms.AssociateMemberFee,
 			ms.AssocMemberIsFriend,
 			ms.AssociateMemberFriendFee,
+			ms.AssociateMemberFirstName,
+			ms.AssociateMemberLastName,
+			ms.AssociateMemberEmail,
 			ms.DonationToSociety,
 			ms.DonationToMuseum,
 			ms.Giftaid,
@@ -119,11 +303,15 @@ func (ms *MembershipSale) Create(db *Database) (int, error) {
 				ms_payment_service,
 				ms_payment_status,
 				ms_payment_id,
+				ms_transaction_type,
 				ms_membership_year,
 				ms_usr1_id,
 				ms_usr1_fee,
 				ms_usr1_friend,
 				ms_usr1_friend_fee,
+				ms_usr1_first_name,
+				ms_usr1_last_name,
+				ms_usr1_email,
 				ms_donation,
 				ms_donation_museum,
 				ms_giftaid,
@@ -134,7 +322,7 @@ func (ms *MembershipSale) Create(db *Database) (int, error) {
 			Values
 			(
 				nextval('membership_sales_ms_id_seq'), 
-				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 0.0, 0.0, 'f'
+				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 0.0, 0.0, 'f'
 			)
 			RETURNING ms_id;
 		`
@@ -144,11 +332,15 @@ func (ms *MembershipSale) Create(db *Database) (int, error) {
 			ms.PaymentService,
 			ms.PaymentStatus,
 			ms.PaymentID,
+			ms.TransactionType,
 			ms.MembershipYear,
 			ms.OrdinaryMemberID,
 			ms.OrdinaryMemberFee,
 			ms.OrdinaryMemberIsFriend,
 			ms.OrdinaryMemberFriendFee,
+			ms.OrdinaryMemberFirstName,
+			ms.OrdinaryMemberLastName,
+			ms.OrdinaryMemberEmail,
 			ms.DonationToSociety,
 			ms.DonationToMuseum,
 			ms.Giftaid,
@@ -313,6 +505,270 @@ func (ms *MembershipSale) AssociateMemberFriendFeeForDisplay() string {
 	}
 
 	return fmt.Sprintf("%.2f", ms.AssociateMemberFriendFee)
+}
+
+// getIDOfMemberRole fetches the role named 'Member' and returns
+// its ID.
+func (db *Database) getIDOfMemberRole() (int, error) {
+
+	const sql = `
+		select rol_id from adm_roles where rol_name='Member'
+	`
+
+	var rol_id int
+
+	err := db.QueryRow(sql).Scan(&rol_id)
+	if err != nil {
+		return 0, err
+	}
+
+	return rol_id, nil
+}
+
+// CreateUser creates a user with the valid flag set.  The password is
+// locked so they need to use the password change mechanism to log in.
+// It's assumed that a transaction is set up in the db object.
+func (db *Database) CreateUser(loginName string) (*User, error) {
+
+	const sql = `
+		insert into adm_users
+		(usr_uuid, usr_login_name, usr_password, usr_valid)
+		values($1, $2, '*LK*', 't')
+		RETURNING usr_id
+	`
+
+	uid, uuidError := CreateUuid(db.Transaction, "usr_uuid", "adm_users")
+	if uuidError != nil {
+		return nil, uuidError
+	}
+
+	var usr_id int
+	var createError error
+	usr := NewUser(loginName)
+
+	createError = db.QueryRow(sql, uid, usr.LoginName).Scan(&usr_id)
+
+	if createError != nil {
+		return nil, createError
+	}
+
+	usr.ID = usr_id
+
+	return usr, nil
+}
+
+func (db *Database) GetUser(id int) (*User, error) {
+	const sql = `
+		SELECT usr_id, usr_uuid, usr_login_name, usr_password, usr_valid
+		FROM adm_users
+		WHERE usr_id = $1;
+	`
+
+	u := NewUser("name to be overwritten")
+
+	err := db.QueryRow(sql, id).Scan(&u.ID, &u.UUID, &u.LoginName, &u.Password, &u.Valid)
+	if err != nil {
+		return nil, err
+	}
+
+	return u, nil
+}
+
+// CreateMember creates a new record in the adm_members table and
+// returns it.  The member has associated role 'Member'.  The format
+// of the dates is 'YYYYMMDD'.  The mem_approved flag is set, which
+// allows the user to log in.  It's assumed that a transaction is
+// set up in the db object.
+func (db *Database) CreateMember(userID int, startDate, endDate string) (*Member, error) {
+
+	sqlPostgres := `
+		insert into adm_members
+		(mem_uuid, mem_rol_id, mem_usr_id, mem_begin, mem_end, mem_approved)
+		values($1, $2, $3, TO_DATE($4, 'YYYY-MM-DD'), TO_DATE($5, 'YYYY-MM-DD'), 1)
+		RETURNING mem_id;
+	`
+
+	sqlSQLite := `
+		insert into adm_members
+		(mem_uuid, mem_rol_id, mem_usr_id, mem_begin, mem_end, mem_approved)
+		values(?, ?, ?, ?, ?, 1)
+		RETURNING mem_id;
+	`
+
+	var sql string
+	switch db.Type {
+	case "postgres":
+		sql = sqlPostgres
+	default:
+		sql = sqlSQLite
+	}
+
+	member_role_id, fetchRoleError := db.getIDOfMemberRole()
+	if fetchRoleError != nil {
+		return nil, fetchRoleError
+	}
+
+	uid, uuidError := CreateUuid(db.Transaction, "mem_uuid", "adm_members")
+	if uuidError != nil {
+		return nil, uuidError
+	}
+
+	mbr := NewMember(userID, startDate, endDate)
+	mbr.RoleID = member_role_id
+
+	var mem_id int
+
+	createError := db.QueryRow(sql, uid, member_role_id, mbr.UserID, mbr.StartDate, mbr.EndDate).Scan(&mem_id)
+
+	if createError != nil {
+		return nil, createError
+	}
+
+	mbr.ID = mem_id
+
+	return mbr, nil
+}
+
+func (db *Database) GetMember(id int) (*Member, error) {
+	const sql = `
+		SELECT mem_id, mem_uuid, mem_rol_id, mem_usr_id, mem_begin, mem_end, mem_approved
+		FROM adm_members
+		WHERE mem_id = $1;
+	`
+
+	// Create a new member object.  Any values passed will be overwritten by the scan.
+	m := NewMember(0, "1970-01-01", "1970-01-01")
+
+	err := db.QueryRow(sql, id).Scan(&m.ID, &m.UUID, &m.RoleID, &m.UserID, &m.StartDate, &m.EndDate)
+	if err != nil {
+		return nil, err
+	}
+
+	return m, nil
+}
+
+// GetMemberOfUser gets the member record with role 'Member' associated
+// with the user with the given ID.
+func (db *Database) GetMemberOfUser(id int) (*Member, error) {
+	const sql = `
+		SELECT m.mem_id, m.mem_uuid, m.mem_rol_id, m.mem_usr_id, 
+			m.mem_begin, m.mem_end, m.mem_approved
+		FROM adm_members as m
+		LEFT JOIN adm_roles as r
+			ON r.rol_id = m.mem_rol_id
+			AND r.rol_name = 'Member'
+		WHERE m.mem_usr_id = $1;
+	`
+
+	// Create a new member object.  Any values passed will be overwritten by the scan.
+	m := NewMember(0, "1970-01-01", "1970-01-01")
+
+	err := db.QueryRow(sql, id).Scan(&m.ID, &m.UUID, &m.RoleID, &m.UserID, &m.StartDate, &m.EndDate, &m.Approved)
+	if err != nil {
+		return nil, err
+	}
+
+	return m, nil
+}
+
+// CreateAccounts creates accounts for an ordinary member and for an
+// associate member, if given.  Each account is represented by a record in
+// the adm_users table, a linked record in adm_members with role Member
+// and, if possible, a linked record in adm_user_data giving the user's
+// email address (which is required to change their password).  The given
+// sale record supplies the data.  It's assumed that the db object
+// contains a transaction.  The ID of the ordinary user is returned.
+//
+// The ordinary member's account name is their email address, which
+// simplifies the password change process.  The associate member may not
+// have given their email address, in which case the login name is formed
+// from their first and last name ("first.last").  HOWEVER without an
+// email address they can't get control of their account by setting their
+// password.  It's just a record for us that they are a paid-up member.
+func (db *Database) CreateAccounts(sale *MembershipSale, startTime time.Time) (int, int, error) {
+
+	// The accounts start today and end at the end of the year given in
+	// the sale record.  The format of the date strings is YYYY-MM-DD.
+	start := startTime.Format("2006-01-02")
+	end := fmt.Sprintf("%d-12-31", sale.MembershipYear)
+
+	// Get the login name(s) from the sale.
+	name := getLoginNames(sale)
+
+	// Create the user for the ordinary account.
+	ordUser, createUserError := db.CreateUser(name[0])
+	if createUserError != nil {
+		return 0, 0, createUserError
+	}
+
+	// Update the sale.
+	sale.OrdinaryMemberID = ordUser.ID
+
+	// Create the member record for the ordinary account.
+	_, createMemberError := db.CreateMember(ordUser.ID, start, end)
+	if createMemberError != nil {
+		return 0, 0, createMemberError
+	}
+
+	// Set the date last paid.
+	dlpError := db.SetDateLastPaid(sale.OrdinaryMemberID, startTime)
+	if dlpError != nil {
+		return 0, 0, dlpError
+	}
+
+	// If the sale includes payment for an associate member, set up a record for
+	// them too.
+
+	var assocUser *User
+	var assocUserID int
+
+	if len(name) > 1 {
+
+		var createUserError error
+		assocUser, createUserError = db.CreateUser(name[1])
+		if createUserError != nil {
+			return 0, 0, createUserError
+		}
+
+		// Set the result.
+		assocUserID = assocUser.ID
+		// Update the sale.
+		sale.AssociateMemberID = assocUser.ID
+
+		// Create the member record for the associate account.
+		_, createMemberError := db.CreateMember(assocUser.ID, start, end)
+		if createMemberError != nil {
+			return 0, 0, createMemberError
+		}
+	}
+
+	return ordUser.ID, assocUserID, nil
+}
+
+// getLoginNames get the ordinary member's login name (their email
+// address) and, if there is an associate, their login name (
+// email if given, otherwise their name in the form  "first.last" )
+func getLoginNames(sale *MembershipSale) []string {
+
+	result := make([]string, 0, 2)
+
+	result = append(result, sale.OrdinaryMemberEmail)
+
+	if sale.AssociateMemberID > 0 {
+		// The sale includes an associate member, who may or may not
+		// have an email address.
+
+		if len(sale.AssociateMemberEmail) > 0 {
+			result = append(result, sale.AssociateMemberEmail)
+		} else {
+			// No email address.  Use the name - "first.last".
+			loginName := sale.AssociateMemberFirstName + "." +
+				sale.AssociateMemberLastName
+			result = append(result, loginName)
+		}
+	}
+
+	return result
 }
 
 // GetMembershipSale gets the membership_sale record for the user with
@@ -552,14 +1008,14 @@ func (db *Database) SetMemberEndDate(userID int, year int) error {
 	const funcName = "Database.SetMemberEndDate"
 
 	const getMemberIDSQL = `
-	SELECT m.mem_id
-	FROM adm_members AS m
-	LEFT JOIN adm_users AS u
-		ON m.mem_usr_id=u.usr_id
-	LEFT JOIN adm_roles as r
-		ON r.rol_id = m.mem_rol_id
-	WHERE r.rol_name = 'Member'
-	AND u.usr_id = $1;
+		SELECT m.mem_id
+		FROM adm_members AS m
+		LEFT JOIN adm_users AS u
+			ON m.mem_usr_id=u.usr_id
+		LEFT JOIN adm_roles as r
+			ON r.rol_id = m.mem_rol_id
+		WHERE r.rol_name = 'Member'
+		AND u.usr_id = $1;
 	`
 
 	// If everything is working properly we should only get exactly
@@ -576,6 +1032,7 @@ func (db *Database) SetMemberEndDate(userID int, year int) error {
 		return errors.New(em)
 	}
 
+	// Ensure that rows is closed if there is an error.
 	defer rows.Close()
 
 	// The user has a member record with 'Member' role.  Set the
@@ -600,6 +1057,9 @@ func (db *Database) SetMemberEndDate(userID int, year int) error {
 		}
 		ids = append(ids, id)
 	}
+
+	// We must close the rows before we run another query.
+	rows.Close()
 
 	endDate := fmt.Sprintf("%04d-12-31 23:59:59 999999 +00", year)
 
@@ -656,6 +1116,18 @@ func (db *Database) SetMemberEndDate(userID int, year int) error {
 	return nil
 }
 
+// SetEmailField sets the email address field for the user in
+// adm_user_data.
+func (db *Database) SetEmailField(userID int, emailAddress string) error {
+
+	fieldID, fieldError := db.getEmailID()
+	if fieldError != nil {
+		return fieldError
+	}
+
+	return SetUserDataField[string](db, fieldID, userID, emailAddress)
+}
+
 // SetLastPayment sets the date of last payment field in adm_user_data.
 func (db *Database) SetLastPayment(userID int, payment float64) error {
 	fieldID, fieldError := db.getLastPaymentID()
@@ -663,7 +1135,7 @@ func (db *Database) SetLastPayment(userID int, payment float64) error {
 		return fieldError
 	}
 
-	return db.SetUserDataFloatField(fieldID, userID, payment)
+	return SetUserDataField[float64](db, fieldID, userID, payment)
 }
 
 // SetDonationToSociety sets the donation to society field in adm_user_data.
@@ -673,7 +1145,7 @@ func (db *Database) SetDonationToSociety(userID int, payment float64) error {
 		return fieldError
 	}
 
-	return db.SetUserDataFloatField(fieldID, userID, payment)
+	return SetUserDataField[float64](db, fieldID, userID, payment)
 }
 
 // SetDonationToMuseum sets the donation to museum field in adm_user_data.
@@ -683,13 +1155,13 @@ func (db *Database) SetDonationToMuseum(userID int, payment float64) error {
 		return fieldError
 	}
 
-	return db.SetUserDataFloatField(fieldID, userID, payment)
+	return SetUserDataField[float64](db, fieldID, userID, payment)
 }
 
 // SetDateLastPaid sets the date last paid field in adm_user_data.
 func (db *Database) SetDateLastPaid(userID int, d time.Time) error {
 
-	fieldID, fieldError := db.getFieldIDOnce("DATE_LAST_PAID", &db.dateLastPaidID)
+	fieldID, fieldError := db.getFieldID("DATE_LAST_PAID")
 	if fieldError != nil {
 		return fieldError
 	}
@@ -706,9 +1178,9 @@ func (db *Database) SetFriendField(userID int, ticked bool) error {
 	}
 
 	if ticked {
-		return db.SetUserDataIntField(fieldID, userID, 1)
+		return SetUserDataField[int](db, fieldID, userID, 1)
 	} else {
-		return db.SetUserDataIntField(fieldID, userID, 0)
+		return SetUserDataField[int](db, fieldID, userID, 0)
 	}
 
 }
@@ -725,9 +1197,9 @@ func (db *Database) SetGiftaidField(userID int, ticked bool) error {
 	// it's already set from last year but not this year, ensure that
 	// the value in the DB record is reset.
 	if ticked {
-		return db.SetUserDataIntField(fieldID, userID, 1)
+		return SetUserDataField[int](db, fieldID, userID, 1)
 	} else {
-		return db.SetUserDataIntField(fieldID, userID, 0)
+		return SetUserDataField[int](db, fieldID, userID, 0)
 	}
 }
 
@@ -760,7 +1232,7 @@ func (db *Database) SetMembersAtAddress(userID int, members int) error {
 	if fieldError != nil {
 		return fieldError
 	}
-	return db.SetUserDataIntField(fieldID, userID, members)
+	return SetUserDataField[int](db, fieldID, userID, members)
 }
 
 // SetFriendsAtAddress sets the number of friends of the museum at the
@@ -771,7 +1243,7 @@ func (db *Database) SetFriendsAtAddress(userID int, members int) error {
 		return fieldError
 	}
 
-	return db.SetUserDataIntField(fieldID, userID, members)
+	return SetUserDataField[int](db, fieldID, userID, members)
 }
 
 // SetUserDataFloatField sets the field with ID fieldID in adm_user_data to a
@@ -870,7 +1342,7 @@ func (db *Database) SetUserDataIntField(fieldID, userID int, intValue int) error
 	}
 
 	if returnedID == 0 {
-		em := fmt.Sprintf("MembershipSale.%s: zero return updating ID %d", f, returnedID)
+		em := fmt.Sprintf("%s: zero return updating ID %d", f, returnedID)
 		return errors.New(em)
 	}
 
@@ -901,6 +1373,86 @@ func (db *Database) GetUserDataIntField(fieldID, userID int) (int, error) {
 	return fetchedValue, nil
 }
 
+// SetUserDataStringField sets the field with ID fieldID in adm_user_data to a
+// string value.  If a record for the field is missing, one is created.
+func SetUserDataField[T int | float64 | bool | string](db *Database, fieldID, userID int, val T) error {
+
+	f := "SetUserDataField"
+
+	var returnedID int
+	var sqlCommand string
+	var execAndScanError error
+	switch {
+	case db.FieldSet(fieldID, userID):
+		// There is already a record for this field.  Update the value.
+		sqlCommand = `
+			UPDATE adm_user_data
+			SET usd_value = $1
+			WHERE usd_usr_id = $2
+			AND usd_usf_id = $3
+			RETURNING usd_id;
+		`
+		execAndScanError = db.QueryRow(sqlCommand, val, userID, fieldID).Scan(&returnedID)
+
+	case db.Type == "sqlite":
+		// SQLite - There is no record for that field.  Create one.
+		sqlCommand = `
+			INSERT INTO adm_user_data(usd_id, usd_usr_id, usd_usf_id, usd_value)
+			VALUES (?, ?, ?, ?)
+			RETURNING usd_id;
+		`
+		nextSQLiteID++
+		execAndScanError = db.QueryRow(sqlCommand, nextSQLiteID, userID, fieldID, val).Scan(&returnedID)
+
+	default:
+		// Postgres - There is no record for that field.  Create one.
+		sqlCommand = `
+			INSERT INTO adm_user_data(usd_id, usd_usr_id, usd_usf_id, usd_value)
+			VALUES (nextval('public.adm_user_data_usd_id_seq'), $1, $2, $3)
+			RETURNING usd_id;
+		`
+		execAndScanError = db.QueryRow(sqlCommand, userID, fieldID, val).Scan(&returnedID)
+	}
+
+	if execAndScanError != nil {
+		return execAndScanError
+	}
+
+	if returnedID == 0 {
+		em := fmt.Sprintf("%s: zero return updating ID %d", f, returnedID)
+		return errors.New(em)
+	}
+
+	return nil
+}
+
+// GetUserDataField gets the value of type T from the field with ID
+// fieldID from adm_user_data.  If a record for the user is not present, an
+// error is returned.
+// func Print[T any](s []T) {
+func GetUserDataField[T int | float64 | bool | string](db *Database, fieldID, userID int) (T, error) {
+
+	f := "getUserDataField"
+
+	const sqlCommand = `
+		SELECT usd_value
+		FROM adm_user_data
+		WHERE usd_usr_id = $1
+		AND usd_usf_id = $2;
+	`
+
+	var fetchedValue T
+	queryAndScanError := db.QueryRow(sqlCommand, userID, fieldID).Scan(&fetchedValue)
+	if queryAndScanError != nil {
+		em := fmt.Sprintf("%s: %v", f, queryAndScanError)
+		// Return the zero value of the type.
+		var t T
+		return t, errors.New(em)
+	}
+
+	return fetchedValue, nil
+}
+
 // SetDateFieldInUserData sets the field with ID fieldID in adm_user_data to an
 // date value, eg '2025-10-30'.
 func (db *Database) SetDateFieldInUserData(fieldID, userID int, t time.Time) error {
@@ -910,11 +1462,11 @@ func (db *Database) SetDateFieldInUserData(fieldID, userID int, t time.Time) err
 	dateStr := t.Format("2006-01-02")
 
 	// Neither Postgres nor SQLite support rowsAffected.  Use RETURNING.
-	var sqlCommand string
+	var sql string
 
 	if db.FieldSet(fieldID, userID) {
 		// There is already a record for this field.  Update it.
-		sqlCommand = `
+		sql = `
 			UPDATE adm_user_data
 			SET usd_value = $1
 			WHERE usd_usr_id = $2
@@ -924,7 +1476,7 @@ func (db *Database) SetDateFieldInUserData(fieldID, userID int, t time.Time) err
 	} else {
 
 		// There is no record for this field.  Create and set it.
-		sqlCommand = `
+		sql = `
 			INSERT INTO adm_user_data(usd_value, usd_usr_id, usd_usf_id)
 			VALUES ($1, $2, $3)
 			RETURNING usd_usr_id;
@@ -933,7 +1485,7 @@ func (db *Database) SetDateFieldInUserData(fieldID, userID int, t time.Time) err
 
 	var returnedID int
 
-	execAndScanError := db.QueryRow(sqlCommand, dateStr, userID, fieldID).Scan(&returnedID)
+	execAndScanError := db.QueryRow(sql, dateStr, userID, fieldID).Scan(&returnedID)
 	if execAndScanError != nil {
 		em := fmt.Sprintf("%s: %v", f, execAndScanError)
 		return errors.New(em)
@@ -1025,6 +1577,8 @@ func (db *Database) SetTimeFieldInUserData(fieldID, userID int, t time.Time) err
 	return nil
 }
 
+// FieldSet checks whether the given field in adm_user_data
+// for the given user.
 func (db *Database) FieldSet(fieldID, userID int) bool {
 	const sqlSelect = `
 		SELECT usd_id FROM adm_user_data
@@ -1053,179 +1607,91 @@ func (db *Database) FieldSet(fieldID, userID int) bool {
 func (db *Database) getFirstNameID() (int, error) {
 	// Get the ID just once.
 	const firstNameFieldName = "FIRST_NAME"
-	if db.firstNameID != 0 {
-		return db.firstNameID, nil
-	}
-
-	// This is the first call so we need to look up the ID.
 	fieldID, fetchError := db.getFieldID(firstNameFieldName)
 	if fetchError != nil {
 		return 0, errors.New("getFirstNameID: " + fetchError.Error())
 	}
-
-	// Set the global ID so that we don't have to look up again.
-	db.firstNameID = fieldID
-
 	return fieldID, nil
 }
 
 // getLastNameID return the Id of the last name field.
 func (db *Database) getLastNameID() (int, error) {
 	const lastNameFieldName = "LAST_NAME"
-	if db.lastNameID != 0 {
-		return db.lastNameID, nil
-	}
-
-	// This is the first call so we need to look up the ID.
 	fieldID, fetchError := db.getFieldID(lastNameFieldName)
 	if fetchError != nil {
 		return 0, errors.New("getLastNameID: " + fetchError.Error())
 	}
-
-	// Set the global ID so that we don't have to look up again.
-	db.lastNameID = fieldID
-
 	return fieldID, nil
 }
 
 // getEmailID gets the ID of the Email field.
 func (db *Database) getEmailID() (int, error) {
 	const emailFieldName = "EMAIL"
-	if db.emailID != 0 {
-		return db.emailID, nil
-	}
-
-	// This is the first call so we need to look up the ID.
 	fieldID, fetchError := db.getFieldID(emailFieldName)
 	if fetchError != nil {
 		return 0, errors.New("getEmailID: " + fetchError.Error())
 	}
-
-	// Set the global ID so that we don't have to look up again.
-	db.emailID = fieldID
-
 	return fieldID, nil
 }
 
 // getLastPaymentID gets the ID of the last payment field.
 func (db *Database) getLastPaymentID() (int, error) {
-
-	if db.lastPaymentID != 0 {
-		return db.lastPaymentID, nil
-	}
-
-	// This is the first call so we need to look up the ID.
 	const fieldName = "VALUE_OF_LAST_PAYMENT"
 	fieldID, fetchError := db.getFieldID(fieldName)
 	if fetchError != nil {
 		return 0, errors.New("getLastPaymentID: " + fetchError.Error())
 	}
-
-	// Set the ID so that we don't have to look up again.
-	db.lastPaymentID = fieldID
-
 	return fieldID, nil
 }
 
 // getDonationToSocietyID gets the ID of the donation to museum field.
 func (db *Database) getDonationToSocietyID() (int, error) {
 	const fieldName = "VALUE_OF_DONATION_TO_LDLHS"
-	if db.donationToSocietyID != 0 {
-		return db.donationToSocietyID, nil
-	}
-
-	// This is the first call so we need to look up the ID.
 	fieldID, fetchError := db.getFieldID(fieldName)
 	if fetchError != nil {
 		return 0, errors.New("getDonationToSocietyID: " + fetchError.Error())
 	}
-
-	// Set the global ID so that we don't have to look up again.
-	db.donationToSocietyID = fieldID
-
 	return fieldID, nil
 }
 
 // getDonationMuseumID gets the ID of the donation to museum field.
 func (db *Database) getDonationToMuseumID() (int, error) {
 	const fieldName = "VALUE_OF_DONATION_TO_THE_MUSEUM"
-	if db.donationToMuseumID != 0 {
-		return db.donationToMuseumID, nil
-	}
-
-	// This is the first call so we need to look up the ID.
 	fieldID, fetchError := db.getFieldID(fieldName)
 	if fetchError != nil {
 		return 0, errors.New("getDonationToMuseumID: " + fetchError.Error())
 	}
-
-	// Set the global ID so that we don't have to look up again.
-	db.donationToMuseumID = fieldID
-
 	return fieldID, nil
 }
 
 // getFriendID gets the ID of the donation to museum field.
 func (db *Database) getFriendID() (int, error) {
 	const fieldName = "FRIEND_OF_THE_MUSEUM"
-	if db.friendID != 0 {
-		return db.friendID, nil
-	}
-
-	// This is the first call so we need to look up the ID.
 	fieldID, fetchError := db.getFieldID(fieldName)
 	if fetchError != nil {
 		return 0, errors.New("getFriendID: " + fetchError.Error())
 	}
-
-	// Set the global ID so that we don't have to look up again.
-	db.friendID = fieldID
-
 	return fieldID, nil
 }
 
 // getGiftaidID gets the ID of the giftaid field in adm_user_fields.
 func (db *Database) getGiftaidID() (int, error) {
 	const fieldName = "GIFT_AID"
-
 	fieldID, fetchError := db.getFieldID(fieldName)
 	if fetchError != nil {
 		return 0, errors.New("getGiftaidID: " + fetchError.Error())
 	}
-
 	return fieldID, nil
 }
 
 // getMembersAtAddressID gets the ID of the members at this address field.
 func (db *Database) getMembersAtAddressID() (int, error) {
-	return db.getFieldIDOnce(
-		"MEMBERS_AT_ADDRESS",
-		&db.membersAtAddressID)
+	return db.getFieldID("MEMBERS_AT_ADDRESS")
 }
 
 // getFriendsAtAddressID gets the ID of the friends at this address field.
 func (db *Database) getFriendsAtAddressID() (int, error) {
-	return db.getFieldIDOnce(
-		"NUMBER_OF_FRIENDS_OF_THE_MUSEUM_AT_THIS_ADDRESS",
-		&db.friendsAtAddressID)
-}
-
-// getFieldIDOnce returns the ID of a field from adm_user_fields.
-// It stores the value in the given cache and uses that in subsequent
-// calls.
-func (db *Database) getFieldIDOnce(fieldName string, cache *int) (int, error) {
-	if *cache != 0 {
-		return *cache, nil
-	}
-
-	// This is the first call so we need to look up the ID.
-	var fetchError error
-	*cache, fetchError = db.getFieldID(fieldName)
-	if fetchError != nil {
-		return 0, errors.New("getFieldIDOnce: " + fetchError.Error())
-	}
-
-	return *cache, nil
+	return db.getFieldID("NUMBER_OF_FRIENDS_OF_THE_MUSEUM_AT_THIS_ADDRESS")
 }
 
 // getFieldID gets the ID of the given field.
@@ -1240,4 +1706,51 @@ func (db *Database) getFieldID(name string) (int, error) {
 	}
 
 	return id, nil
+}
+
+// CreateUuid creates and returns a UUID which is unique
+// in the given row of the given table.
+func CreateUuid(tx *sql.Tx, field, table string) (string, error) {
+
+	// Do this up to ten times until you get a UUID that's not already
+	// used.  Each attempt is very unlikely to fail.
+	for i := 0; i < 10; i++ {
+
+		// Create a UUID.
+		u := uuid.New().String()
+
+		// Check that the UUID is not already in the table.
+		// (This is theoretically possible but unlikely.)
+		sql := fmt.Sprintf("select %s from %s where %s = '%s'",
+			field, table, field, u)
+
+		resultSet, err := tx.Query(sql)
+
+		if err != nil {
+			return "", err
+		}
+
+		defer resultSet.Close()
+
+		// Get the results - a list of uuids.  Should be no items
+		// or one item.  If there are no items, u is unique so
+		// return it.  If we fnd any items, the uuid is already
+		// in the table, it's not unique.  We try again until we
+		// find one that is unique.
+		if !resultSet.Next() {
+
+			// Success!
+			return u, nil
+		}
+
+		var fetchedUUID string
+		scanError := resultSet.Scan(&fetchedUUID)
+		if scanError != nil {
+			return "", scanError
+		}
+	}
+
+	// All attempts have failed.  This is very very unlikely but
+	// possible.
+	return "", errors.New("CreateUUID: clash creating Id for table " + table)
 }

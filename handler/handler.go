@@ -17,6 +17,7 @@ import (
 	"github.com/goblimey/go-stripe-payments/database"
 )
 
+// Membership fees - should really be in the database and time-sensitive.
 const ordinaryMembershipFee = float64(24)
 const associateMembershipFee = float64(6)
 const friendMembershipFee = float64(5)
@@ -55,7 +56,6 @@ type PaymentFormData struct {
 	AssociateIsFriendInput string // tickbox - "on", "off", "checked" or "unchecked"
 
 	//  Values set during validation.
-
 	Friend                  bool    // True if the ordinary member's Friend tickbox is valid and true.
 	FriendOutput            string  // Checkbox setting - "checked" or "unchecked"
 	DonationToSociety       float64 // Donation to the society.
@@ -218,10 +218,31 @@ func (hdlr *Handler) GetPaymentData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Start a transaction, stored in the database object.
+	txError := db.BeginTx()
+
+	if txError != nil {
+		reportError(w, txError)
+		return
+	}
+
+	// The transaction should be ether committed or rolled back before this function exits.
+	// In case it isn't, set up a deferred rollback now.  We choose a rollback rather than
+	// a commit because failure to close the transaction already is almost certainly caused
+	// by some sort of catastrophic error.
+	//
+	// When the function is returning, the transaction may have already been closed, in which
+	// case the second rollback may return an error, but that will be ignored.
+	defer db.Rollback()
+
 	defer db.Close()
 
 	// The helper does the work.
 	hdlr.paymentDataHelper(w, r, form, db)
+
+	// paymentDataHelper doesn't change the database so we can just
+	// close the transaction via a rollback.
+	db.Rollback()
 }
 
 // GetPaymentDataHelper validates the form and prepares the response.
@@ -262,6 +283,7 @@ func (hdlr *Handler) paymentDataHelper(w http.ResponseWriter, r *http.Request, f
 	// page.
 
 	ms := database.NewMembershipSale(form.OrdinaryMembershipFee)
+	ms.TransactionType = database.TransactionTypeRenewal
 	ms.MembershipYear = form.PaymentYear
 	ms.OrdinaryMemberID = form.UserID                 // Always present.
 	ms.AssociateMemberID = form.AssocUserID           // 0 if no associated member.
@@ -332,16 +354,16 @@ func (hdlr *Handler) paymentDataHelper(w http.ResponseWriter, r *http.Request, f
 	paymentConfirmationPageTemplate, templateError :=
 		template.New("PaymentConfirmationPage").Parse(paymentConfirmationPageTemplateBody)
 	if templateError != nil {
-		errorHTML := fmt.Sprintf(errorHTMLTemplate, templateError.Error())
 		w.Write([]byte(errorHTML))
+		return
 	}
 
 	// Write the response.
 	executeError := paymentConfirmationPageTemplate.Execute(w, ms)
 
 	if executeError != nil {
-		errorHTML := fmt.Sprintf(errorHTMLTemplate, executeError.Error())
 		w.Write([]byte(errorHTML))
+		return
 	}
 }
 
@@ -421,157 +443,49 @@ func (hdlr *Handler) Success(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	txError := db.BeginTx()
+
+	if txError != nil {
+		reportError(w, txError)
+		return
+	}
+
+	// The transaction should be ether committed or rolled back before this function exits.
+	// In case it isn't, set up a deferred rollback now.  We choose a rollback rather than
+	// a commit because failure to close the transaction already is almost certainly caused
+	// by some sort of catastrophic error.
+	//
+	// When the function is returning, the transaction may have already been closed, in which
+	// case the second rollback may return an error, but that will be ignored.
+	defer db.Rollback()
+
 	defer db.Close()
 
-	hdlr.successHelper(stripeSession.ClientReferenceID, sessionID, w, db)
+	startTime := time.Now()
 
-}
+	sale, fatal, warning := successHelper(db, stripeSession.ClientReferenceID, sessionID, startTime)
 
-// successHelper completes the sale.  It's separated out to support
-// unit testing.
-func (hdlr *Handler) successHelper(salesIDstr, sessionID string, w http.ResponseWriter, db *database.Database) {
+	if fatal != nil {
+		// A fatal error is something that needs to be reported to the user -
+		// the payment has been taken but we can't update the database records.
 
-	var salesID int
-	_, salesIDError := fmt.Sscanf(salesIDstr, "%d", &salesID)
-	if salesIDError != nil {
-		fmt.Println("successHelper: ", salesIDError.Error())
-		reportError(w, salesIDError)
+		reportError(w, fatal)
+		db.Rollback()
+		return
 	}
 
-	// Get the membership sales record.  The ClientReferenceID in the payment
-	// session is the ID of the sales record.
-	ms, msFetchError := db.GetMembershipSale(salesID)
-	if msFetchError != nil {
-		fmt.Println("successHelper: ", msFetchError.Error())
-		reportError(w, msFetchError)
-	}
+	// There was no fatal error, so commit the transaction.
+	db.Commit()
 
-	// The userID of the full member and maybe their associate
-	// member is in the sales record.
-
-	// Set the end date of the full member.  This is the most
-	// important change.  If it fails, warn the user.
-	fmError := db.SetMemberEndDate(ms.OrdinaryMemberID, ms.MembershipYear)
-	if fmError != nil {
-		fmt.Println("successHelper: ", fmError.Error())
-		email := "treasurer@leatherheadhistory.org"
-		em := "Something went wrong.  Please contact " + email
-		reportError(w, errors.New(em))
-	}
-
-	// Any errors after this point are less important.  Log them
-	// but don't show the user an error message.
-
-	// Set the giftaid tick box, true or false.  The box may
-	// already be set from last year and this year it may be
-	// set differently, so don't just set it if the given
-	// value is true.
-	giftAidErr := db.SetGiftaidField(ms.OrdinaryMemberID, ms.Giftaid)
-	if giftAidErr != nil {
-		fmt.Println("successHelper: ", giftAidErr.Error())
-	}
-
-	// Set date last paid.
-	now := time.Now()
-	dlpError := db.SetDateLastPaid(ms.OrdinaryMemberID, now)
-	if dlpError != nil {
-		fmt.Println("successHelper: ", dlpError.Error())
-	}
-
-	// Set members at address - 2 if there is an associate, otherwise 1.
-	membersAtAddress := 1
-	var friendsAtAddress int
-
-	if ms.OrdinaryMemberIsFriend {
-		friendsAtAddress++
-	}
-
-	// If the member is a friend, tick the box.  In case it's
-	// already set from last year but not this year, ensure that the
-	// value in the DB record is reset.
-	friendError := db.SetFriendField(ms.OrdinaryMemberID, ms.OrdinaryMemberIsFriend)
-	if friendError != nil {
-		fmt.Println("successHelper: friend ", friendError.Error())
-	}
-
-	if ms.AssociateMemberID > 0 {
-
-		// Set the Friend field for the associate.
-		err := db.SetFriendField(ms.AssociateMemberID, ms.AssocMemberIsFriend)
-		if err != nil {
-			fmt.Println("successHelper: associate friend", err.Error())
-		}
-
-		// Set the end date of the associate member.
-		setError := db.SetMemberEndDate(ms.AssociateMemberID, ms.MembershipYear)
-		if setError != nil {
-			fmt.Println("successHelper: ", setError.Error())
-		}
-
-		membersAtAddress++
-		if ms.AssocMemberIsFriend {
-			friendsAtAddress++
-		}
-
-		setMembersError := db.SetMembersAtAddress(ms.AssociateMemberID, membersAtAddress)
-		if setMembersError != nil {
-			fmt.Println("successHelper: ", setMembersError.Error())
-		}
-
-		setFriendsError := db.SetFriendsAtAddress(ms.AssociateMemberID, friendsAtAddress)
-		if setFriendsError != nil {
-			fmt.Println("successHelper: ", setFriendsError.Error())
-		}
-	}
-
-	setMembersError := db.SetMembersAtAddress(ms.OrdinaryMemberID, membersAtAddress)
-	if setMembersError != nil {
-		fmt.Println("successHelper: members ", setMembersError.Error())
-	}
-
-	setFriendsError := db.SetFriendsAtAddress(ms.OrdinaryMemberID, friendsAtAddress)
-	if setFriendsError != nil {
-		fmt.Println("successHelper: friends ", setFriendsError.Error())
-	}
-
-	// Update the last payment.
-	paymentError := db.SetLastPayment(ms.OrdinaryMemberID, ms.TotalPayment())
-	if paymentError != nil {
-		fmt.Printf("successHelper: error setting last payment for %d - %v",
-			ms.OrdinaryMemberID, paymentError)
-	}
-
-	// Update the user's donation to society.
-	dsError := db.SetDonationToSociety(ms.OrdinaryMemberID, ms.DonationToSociety)
-	if dsError != nil {
-		fmt.Printf("successHelper: error setting donation to society for %d - %v",
-			ms.OrdinaryMemberID, dsError)
-	}
-
-	// Update the user's donation to museum.
-	dmError := db.SetDonationToMuseum(ms.OrdinaryMemberID, ms.DonationToMuseum)
-	if dmError != nil {
-		fmt.Printf("successHelper: error setting donation to museum for %d - %v",
-			ms.OrdinaryMemberID, dmError)
-	}
-
-	if ms.AssociateMemberID > 0 {
-		assocFriendError := db.SetFriendField(ms.AssociateMemberID, ms.AssocMemberIsFriend)
-		if assocFriendError != nil {
-			fmt.Printf("successHelper: error setting friend value for %d - %v",
-				ms.AssociateMemberID, assocFriendError)
-		}
-	}
-
-	// Update the membership sale record.
-	updateError := ms.Update(db, "complete", sessionID)
-	if updateError != nil {
-		log.Printf("successHelper: failed to update membershipsales record %d", ms.ID)
+	if warning != nil {
+		// A warning is for non-fatal issues.  Make a log entry but don't
+		// show the user an error message.
+		fmt.Printf("success:  %v", warning)
 	}
 
 	// Create the response page.
 
-	insert := hdlr.createCostBreakdown(ms)
+	insert := hdlr.createCostBreakdown(sale)
 
 	// Insert the cost breakdown and the hidden variables into the template.
 	successPageTemplateBody := fmt.Sprintf(successPageTemplateStr, insert)
@@ -580,17 +494,197 @@ func (hdlr *Handler) successHelper(salesIDstr, sessionID string, w http.Response
 	successPageTemplate, parseError :=
 		template.New("SuccessPage").Parse(successPageTemplateBody)
 	if parseError != nil {
-		errorHTML := fmt.Sprintf(errorHTMLTemplate, parseError.Error())
 		w.Write([]byte(errorHTML))
+		return
 	}
 
 	// Write the response.
-	executeError := successPageTemplate.Execute(w, &ms)
+	executeError := successPageTemplate.Execute(w, &sale)
 
 	if executeError != nil {
-		errorHTML := fmt.Sprintf(errorHTMLTemplate, executeError.Error())
 		w.Write([]byte(errorHTML))
+		return
 	}
+}
+
+// successHelper completes the sale.  It's separated out to support
+// unit testing.
+func successHelper(db *database.Database, salesIDstr, sessionID string, startDate time.Time) (sale *database.MembershipSale, fatal, warning error) {
+
+	var salesID int
+	_, salesIDError := fmt.Sscanf(salesIDstr, "%d", &salesID)
+	if salesIDError != nil {
+		fmt.Printf("successHelper: user ID %s - %v", salesIDstr, salesIDError.Error())
+		return nil, salesIDError, nil
+	}
+
+	// Get the membership sales record.  The ClientReferenceID in the payment
+	// session is the ID of the sales record.
+
+	sale, fetchError := db.GetMembershipSale(salesID)
+	if fetchError != nil {
+		// The user has paid but we can't fulfill the sale so this
+		// error is fatal.
+		return nil, fetchError, nil
+	}
+
+	if sale.TransactionType == database.TransactionTypeNewMember {
+
+		// This sale is for a new ordinary member and possibly a new associate member.
+		// Create records for them.
+
+		ordinaryMemberID, associateMemberID, createUserError := db.CreateAccounts(sale, time.Now())
+		if createUserError != nil {
+			return nil, createUserError, nil
+		}
+
+		sale.OrdinaryMemberID = ordinaryMemberID
+		sale.AssociateMemberID = associateMemberID
+
+	} else {
+		// This sale is an ordinary member renewing, possibly with an associate.
+
+		// For a new member, various fields are set at this point, so set them
+		// for the renewing member(s) too.  The most important change is setting
+		// the member end date, because that's what marks them as a paid up
+		// member, which is what they've just paid for.
+
+		// Set the end date for the ordinary member.
+		omError := db.SetMemberEndDate(sale.OrdinaryMemberID, sale.MembershipYear)
+		if omError != nil {
+			return nil, omError, nil
+		}
+
+		if sale.AssociateMemberID > 0 {
+			// Set the end date for the associate member.
+			assocError := db.SetMemberEndDate(sale.AssociateMemberID, sale.MembershipYear)
+			if assocError != nil {
+				return nil, assocError, nil
+			}
+		}
+
+		// Set the date last paid field.  It's for our accounting, so not so important.
+		// If it fails, return a warning not a fatal error.
+		now := time.Now()
+		dlpError := db.SetDateLastPaid(sale.OrdinaryMemberID, now)
+		if dlpError != nil {
+			return sale, nil, dlpError
+		}
+	}
+
+	// The ID of the user record of the ordinary member is in the sale record.  If
+	// the sale includes an associate member, the ID of their user record is there too.
+
+	// Count members and friends at this address.  Those values
+	// will be written later.
+	membersAtAddress := 1
+	var friendsAtAddress int
+
+	if sale.OrdinaryMemberIsFriend {
+		friendsAtAddress++
+	}
+
+	if sale.AssociateMemberID > 0 {
+		membersAtAddress++
+		if sale.AssocMemberIsFriend {
+			friendsAtAddress++
+		}
+	}
+
+	// Changes after this point are for our own accounting records, so
+	// the user doesn't need to know about any errors.  Return them as
+	// warnings.
+
+	// Update the date of the last payment.  This is important because
+	// it's used for the giftaid calculation.
+	paymentError := db.SetLastPayment(
+		sale.OrdinaryMemberID, sale.TotalPayment())
+	if paymentError != nil {
+		em := fmt.Sprintf("error setting last payment for %d - %v",
+			sale.OrdinaryMemberID, paymentError)
+
+		return sale, nil, errors.New(em)
+	}
+
+	// Set the giftaid tick box, true or false.
+	giftAidErr := db.SetGiftaidField(sale.OrdinaryMemberID, sale.Giftaid)
+	if giftAidErr != nil {
+		return sale, nil, giftAidErr
+	}
+
+	// Set the members at address and friends at address in the
+	// ordinary member's record.
+	setMembersError := db.SetMembersAtAddress(
+		sale.OrdinaryMemberID, membersAtAddress)
+	if setMembersError != nil {
+		return sale, nil, setMembersError
+	}
+
+	setFriendsError := db.SetFriendsAtAddress(
+		sale.OrdinaryMemberID, friendsAtAddress)
+	if setFriendsError != nil {
+		return sale, nil, setFriendsError
+	}
+
+	// If the member is a friend, tick the box.  In case it's
+	// already set from last year but not this year, ensure that the
+	// value in the DB record is reset.
+	friendError := db.SetFriendField(
+		sale.OrdinaryMemberID, sale.OrdinaryMemberIsFriend)
+	if friendError != nil {
+		return sale, nil, friendError
+	}
+
+	if sale.AssociateMemberID > 0 {
+
+		// Set the Friend field for the associate member.
+		friendError := db.SetFriendField(sale.AssociateMemberID, sale.AssocMemberIsFriend)
+		if friendError != nil {
+			em := fmt.Sprintf("error setting friend value for %d - %v",
+				sale.AssociateMemberID, friendError)
+			return sale, nil, errors.New(em)
+		}
+
+		setMembersError := db.SetMembersAtAddress(
+			sale.AssociateMemberID, membersAtAddress)
+		if setMembersError != nil {
+			return sale, nil, setMembersError
+		}
+
+		setFriendsError := db.SetFriendsAtAddress(
+			sale.AssociateMemberID, friendsAtAddress)
+		if setFriendsError != nil {
+			return sale, nil, setFriendsError
+		}
+	}
+
+	// Update the user's donation to society.
+	dsError := db.SetDonationToSociety(
+		sale.OrdinaryMemberID, sale.DonationToSociety)
+	if dsError != nil {
+		em := fmt.Sprintf("error setting donation to society for %d - %v",
+			sale.OrdinaryMemberID, dsError)
+		return sale, nil, errors.New(em)
+	}
+
+	// Update the user's donation to museum.
+	dmError := db.SetDonationToMuseum(
+		sale.OrdinaryMemberID, sale.DonationToMuseum)
+	if dmError != nil {
+		em := fmt.Sprintf("error setting donation to museum for %d - %v",
+			sale.OrdinaryMemberID, dmError)
+		return sale, nil, errors.New(em)
+	}
+
+	// Update the membership sale record.  Do this last because
+	updateError := sale.Update(db, "complete", sessionID)
+	if updateError != nil {
+		em := fmt.Sprintf("failed to update membership sales record %d", sale.ID)
+		return sale, nil, errors.New(em)
+	}
+
+	// Success!
+	return sale, nil, nil
 }
 
 // Cancel is the handler for the /cancel request.  Stripe makes that
@@ -599,6 +693,9 @@ func (hdlr *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(cancelHTML))
 }
 
+// Checkout is the handler for the /checkout request.  It validates the
+// HTTP parameters and, if valid, creates a MembershipSale record and
+// redirects to the Stripe payment website.
 func (hdlr *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 	form := PaymentFormData{}
 	userIDParam := r.PostFormValue("user_id")
@@ -638,6 +735,8 @@ func (hdlr *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(form.FriendInput) > 0 {
+		// form.FriendOutput is marked as not used.  It's used in the
+		// paymentPageTemplateStr but the compiler can't see that.
 		form.Friend, form.FriendOutput = getTickBox(form.FriendInput)
 		if form.Friend {
 			friendFee = hdlr.FriendMembershipFee
@@ -645,6 +744,8 @@ func (hdlr *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(form.AssociateIsFriendInput) > 0 {
+		// form.AssociateIsFriendOutput is marked as not used.  It's used
+		// in the paymentPageTemplateStr but the compiler can't see that.
 		form.AssociateIsFriend, form.AssociateIsFriendOutput =
 			getTickBox(form.AssociateIsFriendInput)
 		if form.AssociateIsFriend {
@@ -653,6 +754,8 @@ func (hdlr *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(form.GiftaidInput) > 0 {
+		// form.GiftaidOutput is marked as not used.  It's used in the
+		// paymentPageTemplateStr but the compiler can't see that.
 		form.Giftaid, form.GiftaidOutput = getTickBox(form.GiftaidInput)
 	}
 
@@ -706,13 +809,36 @@ func (hdlr *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Start a transaction, stored in the database object.
+	txError := db.BeginTx()
+
+	if txError != nil {
+		reportError(w, txError)
+		return
+	}
+
+	// The transaction should be ether committed or rolled back before this function exits.
+	// In case it isn't, set up a deferred rollback now.  We choose a rollback rather than
+	// a commit because failure to close the transaction already is almost certainly caused
+	// by some sort of catastrophic error.
+	//
+	// When the function is returning, the transaction may have already been closed, in which
+	// case the second rollback may return an error, but that will be ignored.
+	defer db.Rollback()
+
 	defer db.Close()
 
 	salesID, createError := ms.Create(db)
 	if createError != nil {
+		db.Rollback()
 		fmt.Println("checkout:", "CreateError: ", createError.Error())
 		reportError(w, createError)
 	}
+
+	// We have all we need from the database - commit the transaction.
+	db.Commit()
+
+	// Prepare to pass control to the Stripe payment page.
 
 	successURL := fmt.Sprintf("%s://%s/success?session_id={CHECKOUT_SESSION_ID}", hdlr.Protocol, r.Host)
 	cancelURL := fmt.Sprintf("%s://%s/cancel", hdlr.Protocol, r.Host)
@@ -1069,7 +1195,8 @@ func getTickBox(value string) (bool, string) {
 }
 
 func reportError(w http.ResponseWriter, err error) {
-	errorHTML := fmt.Sprintf(errorHTMLTemplate, err)
+
+	fmt.Printf("error %v", err.Error())
 	w.Write([]byte(errorHTML))
 }
 
@@ -1266,14 +1393,16 @@ const cancelHTML = `
 </html>
 `
 
-const errorHTMLTemplate = `
+const errorHTML = `
 <html>
     <head><title>error</title></head>
-    <body style='font-size: 100%%'>
+    <body style='font-size: 100%'>
 		<p>
-			An error occurred.
-			<br>
-			%s
+			Something went wrong after you had paid.
+			Please
+			<a href="mailto:treasurer@leatherheadhistory.org">
+				email the treasurer
+			</a>
 		</p>
     </body>
 </html>

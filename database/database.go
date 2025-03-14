@@ -1,8 +1,9 @@
-// database provides a set of methods to access a variety of databases,
+// model provides a set of methods to access a variety of databases,
 // postgres, sqlite and potentially others.
 package database
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -16,6 +17,9 @@ import (
 
 	"github.com/goblimey/go-tools/testsupport"
 )
+
+// The next value for the ID when a record is created in an SQLite table.
+var nextSQLiteID int
 
 type DBConfig struct {
 	Type string
@@ -46,20 +50,11 @@ func (dbc *DBConfig) String() string {
 }
 
 type Database struct {
-	Type                string   // The type of database - "postgres", "sqlite" etc.
-	Config              DBConfig // The database config.
-	Connection          *sql.DB  // The database connection.
-	SQLiteTempDir       string   // The directory in /tmp used to store the SQLite DB.
-	firstNameID         int      // ID of the First Name field
-	lastNameID          int      // ID of the Last Name field
-	emailID             int      // ID of the email address field
-	friendID            int      // ID of the friend field
-	lastPaymentID       int      // ID of the last payment field
-	donationToSocietyID int      // ID of the donation to society field
-	donationToMuseumID  int      // ID of the donation to museum field
-	membersAtAddressID  int      // ID of the members at this address field
-	friendsAtAddressID  int      // ID of the number of friends at this address field
-	dateLastPaidID      int      // ID of the number of friends at this address field
+	Type          string   // The type of database - "postgres", "sqlite" etc.
+	Config        DBConfig // The database config.
+	Connection    *sql.DB  // The database connection.
+	Transaction   *sql.Tx  // The transaction.
+	SQLiteTempDir string   // The directory in /tmp used to store the SQLite DB.
 }
 
 func New(dbConfig DBConfig) *Database {
@@ -68,7 +63,8 @@ func New(dbConfig DBConfig) *Database {
 }
 
 func (db *Database) String() string {
-	s := fmt.Sprintf("Database{Type: %s,Connection %v}", db.Type, db.Connection)
+	s := fmt.Sprintf("Database{Type: %s, Connection %v, Transaction %v}",
+		db.Type, db.Connection, db.Transaction)
 	return s
 }
 
@@ -127,20 +123,38 @@ func (db *Database) Close() error {
 	return closeError
 }
 
-// QueryRow executes a query that is expected to return at most one row.
-// It massages the query parameter placeholders into the correct form for
-// the database and uses db.sql.QueryRow to do the work.
+// BeginTx starts a transaction using the background context and
+// the default isolation options.  The transaction is stored in
+// the Database object.  (The approach of storing a single
+// transaction makes sense in a web solution that opens a
+// transaction at the start of each HTTP request and closes
+// it at the end.)
+func (db *Database) BeginTx() error {
+	var err error
+	db.Transaction, err = db.Connection.BeginTx(context.Background(), nil)
+	return err
+}
+
+// Commit commits the stored transaction.
+func (db *Database) Commit() error {
+	return db.Transaction.Commit()
+}
+
+// Rollback roles back the stored transaction.
+func (db *Database) Rollback() error {
+	return db.Transaction.Rollback()
+}
+
+// Query executes the given query and returns the rows.  It massages
+// the query parameter placeholders into the correct form for the
+// database and uses db.sql.Query to do the work.
 func (db *Database) Query(query string, args ...any) (*sql.Rows, error) {
 
 	if db.Type == "sqlite" {
 		query = postgresParamsToSQLiteParams(query)
 	}
-	if db.Type == "sqlite" {
-		tables := db.ListSQLiteTables()
-		_ = tables
-	}
 
-	row, err := db.Connection.Query(query, args...)
+	row, err := db.Transaction.Query(query, args...)
 	if db.Type == "sqlite" {
 		tables := db.ListSQLiteTables()
 		_ = tables
@@ -157,7 +171,7 @@ func (db *Database) QueryRow(query string, args ...any) *sql.Row {
 		query = postgresParamsToSQLiteParams(query)
 	}
 
-	row := db.Connection.QueryRow(query, args...)
+	row := db.Transaction.QueryRow(query, args...)
 
 	return row
 }
@@ -171,7 +185,7 @@ func (db *Database) Exec(query string, args ...any) (sql.Result, error) {
 		query = postgresParamsToSQLiteParams(query)
 	}
 
-	result, err := db.Connection.Exec(query, args...)
+	result, err := db.Transaction.Exec(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +207,6 @@ func (db *Database) ListSQLiteTables() []string {
 	// in the format "YYYY-MM-DD HH:MM:SS.SSS"
 	const sql = `SELECT name FROM sqlite_master WHERE type='table'`
 
-	// Use the connection in case we want to call this from Query.
 	rows, getNamesError := db.Connection.Query(sql)
 
 	if getNamesError != nil {

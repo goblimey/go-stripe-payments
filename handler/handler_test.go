@@ -2,8 +2,15 @@ package handler
 
 import (
 	"fmt"
+	"net/http"
+	"strings"
 	"testing"
 )
+
+func TestSuccess(t *testing.T) {
+	body := strings.NewReader(`{"username": "admin","password":"secret"}`)
+	http.NewRequest("POST", "/success", body)
+}
 
 // TestCheckDonation checks the checkDonation validation method -
 // a donation string value must contain a 0 or positive float.
