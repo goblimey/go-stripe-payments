@@ -37,9 +37,8 @@ func Getuid() int {
 	return unix.Getuid()
 }
 
-// Seteuid switches the effective user to the user with the given user ID or returns an
-// error.
-func Seteuid(targetID int) error {
+// Setuid switches to the user with the given user ID or returns an error.
+func Setuid(targetID int) error {
 
 	return unix.Setuid(targetID)
 
