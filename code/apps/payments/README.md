@@ -28,8 +28,8 @@ This should contain:
 ```
 {
     "stripe_secret_key": "your Stripe secret key",
-    "tls_certificate_file": "public https certificate file",
-    "tls_certificate_key_file": "private https certificate file"
+    "ssl_certificate_file": "public https certificate file",
+    "ssl_certificate_key_file": "private https certificate file"
 }
 
 ```

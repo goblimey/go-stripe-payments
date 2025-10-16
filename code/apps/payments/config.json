@@ -1,0 +1,13 @@
+{
+    "organisation_name": "The Organisation",
+    "http": true,
+    "enable_other_member_types": true,
+    "enable_giftaid": true,
+    "email_address_for_questions": "questions@example.com",
+    "email_address_for_failures": "failures@example.com",
+    "ordinary_member_fee": 24.0,
+    "associate_member_fee": 6,
+    "friend_fee": 5,
+    "log_dir": ".",
+    "log_leader": "payments"
+}

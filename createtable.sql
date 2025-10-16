@@ -19,7 +19,7 @@ CREATE TABLE public.membership_sales IF NOT EXISTS
     ms_usr1_friend_fee REAL NOT NULL default 0.0,
     ms_usr1_first_name varchar (50),
     ms_usr1_last_name varchar (50),
-    ms_user1_email varchar (50),
+    ms_usr1_email varchar (50),
     -- 0 if no associate
     ms_usr2_id integer DEFAULT NULL,
     -- 0.0 if no associate
@@ -36,10 +36,8 @@ CREATE TABLE public.membership_sales IF NOT EXISTS
     -- 0.0 if no donation to museum.
     ms_donation_museum REAL NOT NULL DEFAULT 0.0,
     ms_giftaid boolean NOT NULL DEFAULT false,
-    timestamp_create timestamp
-    without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP 
-
-
+    ms_timestamp_create timestamp
+    without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
 );
 
     ALTER TABLE public.membership_sales OWNER TO postgres;

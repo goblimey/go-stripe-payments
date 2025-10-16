@@ -27,7 +27,6 @@
 
 find . -name 'coverage.out' -exec rm {} \;
 
-
 # Find all directories containing .go files and run testgo.sh on
 # each.  if there are files foo.go and foo_test.go, tester will
 # be run twice but the second run will see the test coverage 

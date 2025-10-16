@@ -1,0 +1,8 @@
+
+		{
+			"organisation_name": "some org",
+			"tls_certificate_file": "pem",
+			"tls_certificate_key_file": "key"
+			
+		}
+	
