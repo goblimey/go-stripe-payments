@@ -629,9 +629,8 @@ func ConnectToSQLite(connectionDetails string) (*sql.DB, error) {
 
 	slog.Debug("ConnectToSQLite: " + connectionDetails)
 
-	// If you use the "modernc.org/sqlite" driver, open as follows:
-	// conn, err := sql.Open("sqlite", connectionDetails)
-	conn, err := sql.Open("sqlite", connectionDetails)
+	conn, err := sql.Open("sqlite", connectionDetails) // modernc.org/sqlite driver
+	// conn, err := sql.Open("sqlite3", connectionDetails)	// github.com/mattn/go-sqlite3 driver
 	if err != nil {
 		return nil, err
 	}

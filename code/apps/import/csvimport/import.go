@@ -50,6 +50,9 @@ func init() {
 
 func Import(filename string, lastYearOfMembership int) ([]CSVLine, error) {
 
+	// records is the returned object.
+	records := make([]CSVLine, 0)
+
 	ukTime, err := time.LoadLocation("Europe/London")
 	if err != nil {
 		log.Fatalf("failed to get london timezone - %v", err)
@@ -65,8 +68,9 @@ func Import(filename string, lastYearOfMembership int) ([]CSVLine, error) {
 
 	// Checks for the error
 	if openError != nil {
-		m := "Error while reading " + filename
+		m := "Error while reading " + filename + "\n"
 		log.Fatal(m, openError)
+		return records, openError
 	}
 
 	// Closes the file
@@ -74,9 +78,6 @@ func Import(filename string, lastYearOfMembership int) ([]CSVLine, error) {
 
 	// Open a reader reading the CSV file.
 	reader := csv.NewReader(file)
-
-	// records is the returned object.
-	records := make([]CSVLine, 0)
 
 	// The reader returns the contents of the CSV file as a
 	// slice of slices of strings.

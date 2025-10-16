@@ -28,19 +28,19 @@
 package usercontrol
 
 import (
-	"golang.org/x/sys"
+	"golang.org/x/sys/unix"
 )
 
 // Getuid gets the current user ID.  The Windows version always returns a "not
 // implemented" error
-func Getuid() (int, error) {
-	return sys.Getuid()
+func Getuid() int {
+	return unix.Getuid()
 }
 
 // Seteuid switches the effective user to the user with the given user ID or returns an
 // error.
 func Seteuid(targetID int) error {
 
-	return sys.Setuid(targetID)
+	return unix.Setuid(targetID)
 
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/goblimey/go-stripe-payments/code/pkg/database"
 
 	_ "modernc.org/sqlite"
+	// _ "github.com/mattn/go-sqlite3"
 )
 
 var databaseList = []string{"postgres", "sqlite"}
@@ -689,6 +690,7 @@ func TestImport(t *testing.T) {
 	if err != nil {
 		m := err.Error()
 		t.Error(m)
+		return
 	}
 
 	if len(records) == 0 {

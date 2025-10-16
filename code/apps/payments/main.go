@@ -61,7 +61,7 @@ func main() {
 	var errConfig error
 	conf, errConfig = config.GetConfig("./config.json")
 	if errConfig != nil {
-		fmt.Println(errConfig.Error)
+		fmt.Println(errConfig.Error())
 		os.Exit(-1)
 	}
 
