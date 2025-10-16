@@ -313,10 +313,7 @@ func CreateTablesForTesting(db *Database) error {
 		-- 0.0 if no donation to museum.
 		ms_donation_museum REAL NOT NULL DEFAULT 0.0,
 		ms_giftaid boolean NOT NULL DEFAULT false,
-		ms_timestamp_create varchar(30) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		ms_organisation_name varchar(30), 
-		ms_email_address_for_questions varchare(30),
-		ms_email_address_for_failures varchar(30)
+		ms_timestamp_create varchar(30) NOT NULL DEFAULT CURRENT_TIMESTAMP
 	);
 `
 

@@ -126,31 +126,28 @@ func TestUpdateRowWithAssociate(t *testing.T) {
 		_ = ms1ID
 
 		ms2Orig := MembershipSale{
-			PaymentService:           "e",
-			PaymentStatus:            "f",
-			PaymentID:                "g",
-			TransactionType:          "h",
-			MembershipYear:           2024,
-			UserID:                   u1.ID,
-			OrdinaryMemberFeePaid:    1.2,
-			Friend:                   true,
-			FriendFeePaid:            3.4,
-			FirstName:                "i",
-			LastName:                 "j",
-			Email:                    "k",
-			DonationToSociety:        5.6,
-			DonationToMuseum:         7.8,
-			Giftaid:                  true,
-			AssocUserID:              u2.ID,
-			AssocFeePaid:             9.1,
-			AssocFriend:              true,
-			AssocFriendFeePaid:       2.3,
-			AssocFirstName:           "l",
-			AssocLastName:            "m",
-			AssocEmail:               "n",
-			OrganisationName:         "o",
-			EmailAddressForQuestions: "p",
-			EmailAddressForFailures:  "q",
+			PaymentService:        "e",
+			PaymentStatus:         "f",
+			PaymentID:             "g",
+			TransactionType:       "h",
+			MembershipYear:        2024,
+			UserID:                u1.ID,
+			OrdinaryMemberFeePaid: 1.2,
+			Friend:                true,
+			FriendFeePaid:         3.4,
+			FirstName:             "i",
+			LastName:              "j",
+			Email:                 "k",
+			DonationToSociety:     5.6,
+			DonationToMuseum:      7.8,
+			Giftaid:               true,
+			AssocUserID:           u2.ID,
+			AssocFeePaid:          9.1,
+			AssocFriend:           true,
+			AssocFriendFeePaid:    2.3,
+			AssocFirstName:        "l",
+			AssocLastName:         "m",
+			AssocEmail:            "n",
 
 			// Reference Data from the config - not stored in the DB, so must set false
 			// for the later comparisons to work.
@@ -200,9 +197,6 @@ func TestUpdateRowWithAssociate(t *testing.T) {
 		ms2.AssocFirstName = "lb"
 		ms2.AssocLastName = "mb"
 		ms2.AssocEmail = "nb"
-		ms2.OrganisationName = "ob"
-		ms2.EmailAddressForQuestions = "pb"
-		ms2.EmailAddressForFailures = "qb"
 
 		ms2Copy := *ms2
 
@@ -311,21 +305,18 @@ func TestUpdateRowWithNoAssociate(t *testing.T) {
 
 		// Create a a sale for an an ordinary user (user1) with no associate.
 		ms2Orig := MembershipSale{
-			PaymentService:           "e",
-			PaymentStatus:            "f",
-			PaymentID:                "g",
-			TransactionType:          "h",
-			MembershipYear:           2024,
-			UserID:                   u1.ID,
-			OrdinaryMemberFeePaid:    1.2,
-			Friend:                   true,
-			FriendFeePaid:            3.4,
-			FirstName:                "i",
-			LastName:                 "j",
-			Email:                    "k",
-			OrganisationName:         "o",
-			EmailAddressForQuestions: "p",
-			EmailAddressForFailures:  "q",
+			PaymentService:        "e",
+			PaymentStatus:         "f",
+			PaymentID:             "g",
+			TransactionType:       "h",
+			MembershipYear:        2024,
+			UserID:                u1.ID,
+			OrdinaryMemberFeePaid: 1.2,
+			Friend:                true,
+			FriendFeePaid:         3.4,
+			FirstName:             "i",
+			LastName:              "j",
+			Email:                 "k",
 
 			// Reference Data from the config - not stored in the DB, so must be false
 			// for the later comparisons to work.  (That's the default but we set it
@@ -370,9 +361,6 @@ func TestUpdateRowWithNoAssociate(t *testing.T) {
 		ms2.DonationToSociety = 5.65
 		ms2.DonationToMuseum = 7.85
 		ms2.Giftaid = true
-		ms2.OrganisationName = "ob"
-		ms2.EmailAddressForQuestions = "pb"
-		ms2.EmailAddressForFailures = "qb"
 		ms2.EnableOtherMemberTypes = false
 		ms2.EnableGiftaid = false
 

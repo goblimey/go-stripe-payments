@@ -813,16 +813,13 @@ func (ms *MembershipSale) Create(db *Database) (int64, error) {
 				ms_usr2_email,
 				ms_donation,
 				ms_donation_museum,
-				ms_giftaid,
-				ms_organisation_name, 
-				ms_email_address_for_questions,
-				ms_email_address_for_failures
+				ms_giftaid
 			) 
 			VALUES
 			(
 				%s 
 				NULL, NULL, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 
-					$16, $17, $18, $19, $20, $21, $22, $23
+					$16, $17, $18, $19, $20
 			)
 			%s;
 		`
@@ -851,9 +848,6 @@ func (ms *MembershipSale) Create(db *Database) (int64, error) {
 			ms.DonationToSociety,
 			ms.DonationToMuseum,
 			ms.Giftaid,
-			ms.OrganisationName,
-			ms.EmailAddressForQuestions,
-			ms.EmailAddressForFailures,
 		)
 
 	case ms.AssocUserID > 0:
@@ -885,16 +879,13 @@ func (ms *MembershipSale) Create(db *Database) (int64, error) {
 				ms_usr2_email,
 				ms_donation,
 				ms_donation_museum,
-				ms_giftaid,
-				ms_organisation_name, 
-				ms_email_address_for_questions,
-				ms_email_address_for_failures
+				ms_giftaid
 			) 
 			VALUES
 			(
 				%s 
 				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 
-					$16, $17, $18, $19, $20, $21, $22, $23, $24, $25
+					$16, $17, $18, $19, $20, $21, $22
 			)
 			%s;
 		`
@@ -925,9 +916,6 @@ func (ms *MembershipSale) Create(db *Database) (int64, error) {
 			ms.DonationToSociety,
 			ms.DonationToMuseum,
 			ms.Giftaid,
-			ms.OrganisationName,
-			ms.EmailAddressForQuestions,
-			ms.EmailAddressForFailures,
 		)
 
 	default:
@@ -954,9 +942,6 @@ func (ms *MembershipSale) Create(db *Database) (int64, error) {
 					ms_donation,
 					ms_donation_museum,
 					ms_giftaid,
-					ms_organisation_name, 
-					ms_email_address_for_questions,
-					ms_email_address_for_failures,
 					ms_usr2_fee,
 					ms_usr2_friend_fee,
 					ms_usr2_friend
@@ -965,7 +950,7 @@ func (ms *MembershipSale) Create(db *Database) (int64, error) {
 				(
 					%s 
 					NULL, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 
-					$16, $17, $18, 0.0, 0.0, 'f'
+					0.0, 0.0, 'f'
 				)
 				%s;
 			`
@@ -990,9 +975,6 @@ func (ms *MembershipSale) Create(db *Database) (int64, error) {
 			ms.DonationToSociety,
 			ms.DonationToMuseum,
 			ms.Giftaid,
-			ms.OrganisationName,
-			ms.EmailAddressForQuestions,
-			ms.EmailAddressForFailures,
 		)
 	}
 
@@ -1055,10 +1037,7 @@ func (db *Database) GetMembershipSale(id int64) (*MembershipSale, error) {
 		ms_usr1_email,
 		%s(ms_usr2_first_name, ''),
 		%s(ms_usr2_last_name, ''),
-		%s(ms_usr2_email, ''),
-		ms_organisation_name, 
-		ms_email_address_for_questions,
-		ms_email_address_for_failures
+		%s(ms_usr2_email, '')
 	FROM membership_sales
 	WHERE ms_id = $1;
 `
@@ -1106,9 +1085,6 @@ func (db *Database) GetMembershipSale(id int64) (*MembershipSale, error) {
 		&ms.AssocFirstName,
 		&ms.AssocLastName,
 		&ms.AssocEmail,
-		&ms.OrganisationName,
-		&ms.EmailAddressForQuestions,
-		&ms.EmailAddressForFailures,
 	)
 	if err != nil {
 		return nil, err
@@ -1188,11 +1164,8 @@ func (ms *MembershipSale) Update(db *Database) error {
 				ms_usr2_email = $19,
 				ms_donation=  $20,
 				ms_donation_museum = $21,
-				ms_giftaid = $22,
-				ms_organisation_name = $23, 
-				ms_email_address_for_questions = $24,
-				ms_email_address_for_failures = $25
-			WHERE ms_id=$26;
+				ms_giftaid = $22
+			WHERE ms_id=$23;
 		`
 
 		rowsAffected, createError = db.UpdateRow(
@@ -1219,9 +1192,6 @@ func (ms *MembershipSale) Update(db *Database) error {
 			ms.DonationToSociety,
 			ms.DonationToMuseum,
 			giftaid,
-			ms.OrganisationName,
-			ms.EmailAddressForQuestions,
-			ms.EmailAddressForFailures,
 
 			ms.ID, // WHERE clause.
 		)
@@ -1247,9 +1217,6 @@ func (ms *MembershipSale) Update(db *Database) error {
 					ms_donation = $13,
 					ms_donation_museum = $14,
 					ms_giftaid = $15,
-					ms_organisation_name = $16, 
-					ms_email_address_for_questions = $17,
-					ms_email_address_for_failures =$18,
 
 					-- No associate.
 					ms_usr2_id = null,
@@ -1260,7 +1227,7 @@ func (ms *MembershipSale) Update(db *Database) error {
 					ms_usr2_last_name = '',
 					ms_usr2_email = ''
 
-				WHERE ms_id = $19;
+				WHERE ms_id = $16;
 			`
 
 		// The payment ID may be an empty string, to be set later.
@@ -1281,9 +1248,6 @@ func (ms *MembershipSale) Update(db *Database) error {
 			ms.DonationToSociety,
 			ms.DonationToMuseum,
 			giftaid,
-			ms.OrganisationName,
-			ms.EmailAddressForQuestions,
-			ms.EmailAddressForFailures,
 
 			ms.ID, // WHERE clause.
 		)
