@@ -105,7 +105,7 @@ func (h *Handler) GetPaymentData(w http.ResponseWriter, r *http.Request) {
 		fmt.Println(connectionError.Error())
 		form.GeneralErrorMessage = fmt.Sprintf("Fatal error - %v", connectionError)
 		form.Valid = false
-		reportError(w, h.PrePaymentErrorHTML, connectionError)
+		h.reportError(w, h.PrePaymentErrorHTML, connectionError)
 		return
 	}
 
@@ -114,7 +114,7 @@ func (h *Handler) GetPaymentData(w http.ResponseWriter, r *http.Request) {
 
 	if txError != nil {
 		form.Valid = false
-		reportError(w, h.PrePaymentErrorHTML, txError)
+		h.reportError(w, h.PrePaymentErrorHTML, txError)
 		return
 	}
 
@@ -239,7 +239,7 @@ func (h *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 	h.DB.Logger = h.Logger
 	connectionError := h.DB.Connect()
 	if connectionError != nil {
-		reportError(w, h.PrePaymentErrorHTML, connectionError)
+		h.reportError(w, h.PrePaymentErrorHTML, connectionError)
 		return
 	}
 
@@ -247,7 +247,7 @@ func (h *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 	txError := h.DB.BeginTx()
 
 	if txError != nil {
-		reportError(w, h.PrePaymentErrorHTML, txError)
+		h.reportError(w, h.PrePaymentErrorHTML, txError)
 		return
 	}
 
@@ -288,7 +288,7 @@ func (h *Handler) checkoutHelper(w http.ResponseWriter, r *http.Request) {
 		if len(em) != 0 {
 			// The data should already have been validated so this should never happen.
 			logMessage(h.Logger, "CheckoutHelper: %v\n", em)
-			reportError(w, h.PostPaymentErrorHTML, errors.New("internal error"))
+			h.reportError(w, h.PostPaymentErrorHTML, errors.New("internal error"))
 		}
 	}
 
@@ -300,7 +300,7 @@ func (h *Handler) checkoutHelper(w http.ResponseWriter, r *http.Request) {
 		if len(em) > 0 {
 			// The data should already have been validated so this should never happen.
 			logMessage(h.Logger, "CheckoutHelper: %v\n", em)
-			reportError(w, h.PostPaymentErrorHTML, errors.New("internal error"))
+			h.reportError(w, h.PostPaymentErrorHTML, errors.New("internal error"))
 		}
 	}
 
@@ -341,7 +341,7 @@ func (h *Handler) checkoutHelper(w http.ResponseWriter, r *http.Request) {
 	if createError != nil {
 		h.DB.Rollback()
 		logMessage(h.Logger, "checkout: CreateError - %v", createError)
-		reportError(w, h.PrePaymentErrorHTML, createError)
+		h.reportError(w, h.PrePaymentErrorHTML, createError)
 	}
 
 	// We have all we need from the database - commit the transaction.
@@ -405,7 +405,7 @@ func (h *Handler) checkoutHelper(w http.ResponseWriter, r *http.Request) {
 
 		h.DB.Rollback()
 		logMessage(h.Logger, "error creating Stripe session - %v", sessErr)
-		reportError(w, h.PrePaymentErrorHTML, sessErr)
+		h.reportError(w, h.PrePaymentErrorHTML, sessErr)
 	}
 
 	// Redirect to the Stripe system.  On a successful payment, it will
@@ -480,13 +480,13 @@ func (h *Handler) Success(w http.ResponseWriter, r *http.Request) {
 	params := stripe.CheckoutSessionParams{}
 	stripeSession, sessionGetError := session.Get(sessionID, &params)
 	if sessionGetError != nil {
-		reportError(w, h.PrePaymentErrorHTML, sessionGetError)
+		h.reportError(w, h.PrePaymentErrorHTML, sessionGetError)
 		return
 	}
 
 	connError := h.connectToDB()
 	if connError != nil {
-		reportError(w, h.PrePaymentErrorHTML, connError)
+		h.reportError(w, h.PrePaymentErrorHTML, connError)
 		return
 	}
 
@@ -506,7 +506,7 @@ func (h *Handler) Success(w http.ResponseWriter, r *http.Request) {
 	// The end date is the end of the calendar year of payment.
 	londonTime, tzError := time.LoadLocation("Europe/London")
 	if tzError != nil {
-		reportError(w, h.PrePaymentErrorHTML, tzError)
+		h.reportError(w, h.PrePaymentErrorHTML, tzError)
 		return
 	}
 	yearEnd := time.Date(startTime.Year(), time.December, 31, 23, 59, 59, 999999999, londonTime)
@@ -522,7 +522,7 @@ func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSe
 
 	if stripeSession.PaymentStatus != "paid" {
 		e := fmt.Errorf("payment not made")
-		reportError(w, h.PostPaymentErrorHTML, e)
+		h.reportError(w, h.PostPaymentErrorHTML, e)
 		h.DB.Rollback()
 		return
 	}
@@ -533,7 +533,7 @@ func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSe
 		// Can't fetch the sales ID from the session.  This is bad, as the user has paid for a sale
 		// we can't honour.  Report it to the user.
 		e := fmt.Errorf("successHelper: error converting sales ID %s - %v", stripeSession.ClientReferenceID, salesIDError.Error())
-		reportError(w, h.PostPaymentErrorHTML, e)
+		h.reportError(w, h.PostPaymentErrorHTML, e)
 		h.DB.Rollback()
 		return
 	}
@@ -545,7 +545,7 @@ func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSe
 		// The user has paid but we can't fulfill the sale so this error is bad.  Report
 		// it to the user.
 		h.DB.Rollback()
-		reportError(w, h.PostPaymentErrorHTML, fetchError)
+		h.reportError(w, h.PostPaymentErrorHTML, fetchError)
 		return
 	}
 
@@ -569,7 +569,7 @@ func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSe
 	sale.UserID, sale.AssocUserID, lookupError = usersExist(sale, h.DB)
 	if lookupError != nil {
 		h.DB.Rollback()
-		reportError(w, h.PrePaymentErrorHTML, lookupError)
+		h.reportError(w, h.PrePaymentErrorHTML, lookupError)
 		return
 	}
 
@@ -588,7 +588,7 @@ func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSe
 			// Failed to create one or both of the users.  The user has paid but we
 			// can't fulfill the sale so this error is bad.  Report it to the user.
 			h.DB.Rollback()
-			reportError(w, h.PostPaymentErrorHTML, createUserError)
+			h.reportError(w, h.PostPaymentErrorHTML, createUserError)
 			return
 		}
 
@@ -610,7 +610,7 @@ func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSe
 		omError := h.DB.SetMemberEndDate(sale.UserID, sale.MembershipYear)
 		if omError != nil {
 			h.DB.Rollback()
-			reportError(w, h.PostPaymentErrorHTML, omError)
+			h.reportError(w, h.PostPaymentErrorHTML, omError)
 			return
 		}
 
@@ -619,7 +619,7 @@ func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSe
 			assocError := h.DB.SetMemberEndDate(sale.AssocUserID, sale.MembershipYear)
 			if assocError != nil {
 				h.DB.Rollback()
-				reportError(w, h.PostPaymentErrorHTML, assocError)
+				h.reportError(w, h.PostPaymentErrorHTML, assocError)
 				return
 			}
 		}
@@ -638,13 +638,13 @@ func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSe
 	commit1Error := h.DB.Commit()
 	if commit1Error != nil {
 		h.DB.Rollback()
-		reportError(w, h.PostPaymentErrorHTML, commit1Error)
+		h.reportError(w, h.PostPaymentErrorHTML, commit1Error)
 		return
 	}
 
 	txError := h.DB.BeginTx()
 	if txError != nil {
-		reportError(w, h.PrePaymentErrorHTML, txError)
+		h.reportError(w, h.PrePaymentErrorHTML, txError)
 		return
 	}
 
@@ -789,6 +789,12 @@ func (h *Handler) connectToDB() error {
 	}
 
 	return nil
+}
+
+func (hdlr *Handler) reportError(w http.ResponseWriter, errorHTML string, err error) {
+
+	hdlr.Logger.Error(err.Error())
+	w.Write([]byte(errorHTML))
 }
 
 // Fatal logs a fatal error to the structured log and exits.
@@ -1010,12 +1016,6 @@ func getTickBox(value string) (bool, string, string) {
 	default:
 		return false, "off", "unchecked"
 	}
-}
-
-func reportError(w http.ResponseWriter, errorHTML string, err error) {
-
-	fmt.Printf("error %v", err.Error())
-	w.Write([]byte(errorHTML))
 }
 
 func logMessage(logger *slog.Logger, pattern string, a ...any) {

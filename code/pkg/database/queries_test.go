@@ -94,8 +94,6 @@ func TestCreateSQLiteTables(t *testing.T) {
 			return
 		}
 
-		db.Logger = createLoggerForTesting()
-
 		db.BeginTx()
 
 		defer db.Rollback()
@@ -118,8 +116,6 @@ func TestPrepareTestTables(t *testing.T) {
 		if connError != nil {
 			t.Error(connError)
 		}
-
-		db.Logger = createLoggerForTesting()
 
 		db.BeginTx()
 
@@ -145,8 +141,6 @@ func TestGetRole(t *testing.T) {
 			t.Error(connError)
 			return
 		}
-
-		db.Logger = createLoggerForTesting()
 
 		db.BeginTx()
 
@@ -187,8 +181,6 @@ func TestCreateAndDeleteUser(t *testing.T) {
 			t.Error(connError)
 			return
 		}
-
-		db.Logger = createLoggerForTesting()
 
 		db.BeginTx()
 
@@ -274,8 +266,6 @@ func TestGetUsersByLoginName(t *testing.T) {
 			t.Error(connError)
 			return
 		}
-
-		db.Logger = createLoggerForTesting()
 
 		db.BeginTx()
 
@@ -395,8 +385,6 @@ func TestCreateAndDeleteMember(t *testing.T) {
 			t.Error(connError)
 			return
 		}
-
-		db.Logger = createLoggerForTesting()
 
 		db.BeginTx()
 
@@ -578,8 +566,6 @@ func TestCreateAccounts(t *testing.T) {
 			t.Error(connError)
 			return
 		}
-
-		db.Logger = createLoggerForTesting()
 
 		db.BeginTx()
 
@@ -808,8 +794,6 @@ func TestGetFieldID(t *testing.T) {
 			return
 		}
 
-		db.Logger = createLoggerForTesting()
-
 		db.BeginTx()
 
 		defer db.Rollback()
@@ -858,8 +842,6 @@ func TestGetGiftaidID(t *testing.T) {
 			return
 		}
 
-		db.Logger = createLoggerForTesting()
-
 		db.BeginTx()
 
 		defer db.Rollback()
@@ -894,8 +876,6 @@ func TestMemberExists(t *testing.T) {
 			t.Error(connError)
 			continue
 		}
-
-		db.Logger = createLoggerForTesting()
 
 		db.BeginTx()
 
@@ -995,8 +975,6 @@ func TestMemberExistsDetailed(t *testing.T) {
 			return
 		}
 
-		db.Logger = createLoggerForTesting()
-
 		txError := db.BeginTx()
 		if txError != nil {
 			t.Error(txError)
@@ -1068,8 +1046,6 @@ func TestSetLastPayment(t *testing.T) {
 			return
 		}
 
-		db.Logger = createLoggerForTesting()
-
 		txError := db.BeginTx()
 		if txError != nil {
 			t.Error(txError)
@@ -1114,8 +1090,6 @@ func TestCreateUuid(t *testing.T) {
 			return
 		}
 
-		db.Logger = createLoggerForTesting()
-
 		txError := db.BeginTx()
 
 		if txError != nil {
@@ -1155,8 +1129,6 @@ func TestSetUserDataField(t *testing.T) {
 			t.Error(connError)
 			continue
 		}
-
-		db.Logger = createLoggerForTesting()
 
 		txError := db.BeginTx()
 
@@ -1268,8 +1240,6 @@ func TestSetMembersAtAddress(t *testing.T) {
 			break
 		}
 
-		db.Logger = createLoggerForTesting()
-
 		txError := db.BeginTx()
 		if txError != nil {
 			t.Errorf("%s: %v", dbType, txError)
@@ -1332,8 +1302,6 @@ func TestSetDateLastPaid(t *testing.T) {
 			t.Error(connError)
 			break
 		}
-
-		db.Logger = createLoggerForTesting()
 
 		txError := db.BeginTx()
 		if txError != nil {
@@ -1404,8 +1372,6 @@ func TestSetFriendField(t *testing.T) {
 			return
 		}
 
-		db.Logger = createLoggerForTesting()
-
 		txError := db.BeginTx()
 		if txError != nil {
 			t.Error(txError)
@@ -1443,8 +1409,6 @@ func TestSetMemberEndDate(t *testing.T) {
 			t.Error(connError)
 			return
 		}
-
-		db.Logger = createLoggerForTesting()
 
 		txError := db.BeginTx()
 		if txError != nil {
@@ -1488,8 +1452,6 @@ func TestSetGiftaidField(t *testing.T) {
 			t.Error(connError)
 			return
 		}
-
-		db.Logger = createLoggerForTesting()
 
 		txError := db.BeginTx()
 		if txError != nil {
@@ -1574,8 +1536,6 @@ func TestMembershipSale(t *testing.T) {
 			t.Error(connError)
 			return
 		}
-
-		db.Logger = createLoggerForTesting()
 
 		txError := db.BeginTx()
 		if txError != nil {
@@ -1870,8 +1830,6 @@ func F(t *testing.T) {
 			continue
 		}
 
-		db.Logger = createLoggerForTesting()
-
 		txError := db.BeginTx()
 		if txError != nil {
 			t.Error(txError)
@@ -1985,8 +1943,6 @@ func TestSetTimeFieldInUserData(t *testing.T) {
 			continue
 		}
 
-		db.Logger = createLoggerForTesting()
-
 		txError := db.BeginTx()
 		if txError != nil {
 			t.Error(txError)
@@ -2061,8 +2017,6 @@ func TestCreateCategoryAndGetCategory(t *testing.T) {
 			t.Error(connError)
 			continue
 		}
-
-		db.Logger = createLoggerForTesting()
 
 		txError := db.BeginTx()
 		if txError != nil {
