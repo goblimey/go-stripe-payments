@@ -437,6 +437,7 @@ func PopulateTestTables(db *Database) error {
 
 	// UserFieldsForTesting is the list of adm_user_fields rows to be set up for testing.
 	var UserFieldsForTesting = []*FieldData{
+		{0, "", "Donation to the museum.", "VALUE_OF_DONATION_TO_THE_MUSEUM", "DECIMAL", 37, systemUser, catBasic},
 		{0, "", "SYS_EMAIL", "EMAIL", "EMAIL", 6, systemUser, catBasic},
 		{0, "", "Salutation", "SALUTATION", "TEXT", 2, systemUser, catBasic},
 		{0, "", "Initials", "INITIALS", "TEXT", 4, systemUser, catBasic},
@@ -462,9 +463,11 @@ func PopulateTestTables(db *Database) error {
 		{0, "", "Newsletter by Email", "NEWSLETTER_BY_EMAIL", "CHECKBOX", 33, systemUser, catBasic},
 		{0, "", "Permission to send emails", EmailPermNameIntern, "CHECKBOX", 33, systemUser, catBasic},
 		{0, "", "donation to the society", "DONATION_TO_SOCIETY", "DECIMAL", 34, systemUser, catBasic},
-		{0, "", "Donation to the museum.", "DONATION_TO_MUSEUM", "DECIMAL", 35, systemUser, catBasic},
-		{0, "", "Total value of last payment", "VALUE_OF_LAST_PAYMENT", "DECIMAL", 36, systemUser, catBasic},
-		{0, "", "data protection permission", "DATA_PROTECTION_PERMISSION", "checkbox", 37, systemUser, catBasic},
+		{0, "", "donation to the society", "VALUE_OF_DONATION_TO_LDLHS", "DECIMAL", 35, systemUser, catBasic},
+		{0, "", "Donation to the museum.", "DONATION_TO_MUSEUM", "DECIMAL", 36, systemUser, catBasic},
+
+		{0, "", "Total value of last payment", "VALUE_OF_LAST_PAYMENT", "DECIMAL", 38, systemUser, catBasic},
+		{0, "", "data protection permission", "DATA_PROTECTION_PERMISSION", "checkbox", 39, systemUser, catBasic},
 	}
 
 	// Create the field names in adm_user_fields.  The names of the fields are given

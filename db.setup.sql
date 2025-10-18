@@ -180,13 +180,25 @@ insert into adm_user_fields
 values('donationMus', 'Donation to the museum.', 'DONATION_TO_MUSEUM', 'DECIMAL', 35, 
 (select cat_id from adm_categories where cat_name='BASIC_DATA'), 
 (select usr_id from adm_users where usr_login_name='System'));
+
 insert into adm_user_fields
 (usf_uuid, usf_name, usf_name_intern, usf_type, usf_sequence, usf_cat_id, usf_usr_id_create)
-values('total', 'Total value of last payment', 'VALUE_OF_LAST_PAYMENT', 'DECIMAL', 36, 
+values('donationSociety', 'donation to the society', 'VALUE_OF_DONATION_TO_LDLHS', 'DECIMAL', 36,
 (select cat_id from adm_categories where cat_name='BASIC_DATA'), 
 (select usr_id from adm_users where usr_login_name='System'));
 insert into adm_user_fields
 (usf_uuid, usf_name, usf_name_intern, usf_type, usf_sequence, usf_cat_id, usf_usr_id_create)
-values('dpperm', 'data protection permission', 'DATA_PROTECTION_PERMISSION', 'checkbox', 37, 
+values('donationMuseum', 'Donation to the museum.', 'VALUE_OF_DONATION_TO_THE_MUSEUM', 'DECIMAL', 37, 
+(select cat_id from adm_categories where cat_name='BASIC_DATA'), 
+(select usr_id from adm_users where usr_login_name='System'));
+
+insert into adm_user_fields
+(usf_uuid, usf_name, usf_name_intern, usf_type, usf_sequence, usf_cat_id, usf_usr_id_create)
+values('total', 'Total value of last payment', 'VALUE_OF_LAST_PAYMENT', 'DECIMAL', 38, 
+(select cat_id from adm_categories where cat_name='BASIC_DATA'), 
+(select usr_id from adm_users where usr_login_name='System'));
+insert into adm_user_fields
+(usf_uuid, usf_name, usf_name_intern, usf_type, usf_sequence, usf_cat_id, usf_usr_id_create)
+values('dpperm', 'data protection permission', 'DATA_PROTECTION_PERMISSION', 'checkbox', 39, 
 (select cat_id from adm_categories where cat_name='BASIC_DATA'), 
 (select usr_id from adm_users where usr_login_name='System'));
