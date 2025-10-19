@@ -287,7 +287,7 @@ func (h *Handler) checkoutHelper(w http.ResponseWriter, r *http.Request) {
 		em, ms.DonationToSociety = checkDonation(ds)
 		if len(em) != 0 {
 			// The data should already have been validated so this should never happen.
-			logMessage(h.Logger, "CheckoutHelper: %v\n", em)
+			h.logMessage("CheckoutHelper: %v\n", em)
 			h.reportError(w, h.PostPaymentErrorHTML, errors.New("internal error"))
 		}
 	}
@@ -299,7 +299,7 @@ func (h *Handler) checkoutHelper(w http.ResponseWriter, r *http.Request) {
 		em, ms.DonationToMuseum = checkDonation(dm)
 		if len(em) > 0 {
 			// The data should already have been validated so this should never happen.
-			logMessage(h.Logger, "CheckoutHelper: %v\n", em)
+			h.logMessage("CheckoutHelper: %v\n", em)
 			h.reportError(w, h.PostPaymentErrorHTML, errors.New("internal error"))
 		}
 	}
@@ -340,7 +340,7 @@ func (h *Handler) checkoutHelper(w http.ResponseWriter, r *http.Request) {
 	salesID, createError := ms.Create(h.DB)
 	if createError != nil {
 		h.DB.Rollback()
-		logMessage(h.Logger, "checkout: CreateError - %v", createError)
+		h.logMessage("checkout: CreateError - %v", createError)
 		h.reportError(w, h.PrePaymentErrorHTML, createError)
 	}
 
@@ -404,7 +404,7 @@ func (h *Handler) checkoutHelper(w http.ResponseWriter, r *http.Request) {
 	if sessErr != nil {
 
 		h.DB.Rollback()
-		logMessage(h.Logger, "error creating Stripe session - %v", sessErr)
+		h.logMessage("error creating Stripe session - %v", sessErr)
 		h.reportError(w, h.PrePaymentErrorHTML, sessErr)
 	}
 
@@ -461,7 +461,7 @@ func (h *Handler) CreateCheckoutSession(w http.ResponseWriter, r *http.Request) 
 	// Create the checkout session.
 	s, err := session.New(params)
 	if err != nil {
-		logMessage(h.Logger, "/create-checkout-session: error creating stripe session: %v", err)
+		h.logMessage("/create-checkout-session: error creating stripe session: %v", err)
 	}
 	http.Redirect(w, r, s.URL, http.StatusSeeOther)
 }
@@ -473,7 +473,7 @@ func (h *Handler) CreateCheckoutSession(w http.ResponseWriter, r *http.Request) 
 // client reference and complete the sale.
 func (h *Handler) Success(w http.ResponseWriter, r *http.Request) {
 
-	logMessage(h.Logger, "Success: %v\n", h.Conf)
+	h.logMessage("Success()\n")
 
 	// Get the Stripe session.
 	sessionID := r.URL.Query().Get("session_id")
@@ -519,6 +519,8 @@ func (h *Handler) Success(w http.ResponseWriter, r *http.Request) {
 // successHelper completes the sale.  It's separated out and the start and end dates are supplied to
 // support unit testing.
 func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSession *stripe.CheckoutSession, sessionID string, startDate, endDate, paymentDate time.Time) {
+
+	h.logMessage("successHelper: year ending %v", endDate)
 
 	if stripeSession.PaymentStatus != "paid" {
 		e := fmt.Errorf("payment not made")
@@ -573,15 +575,19 @@ func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSe
 		return
 	}
 
-	logMessage(h.Logger, "SuccessHelper: user ID %d %s %s %s %d %s %s %s\n",
-		sale.UserID, sale.FirstName, sale.LastName, sale.Email, sale.AssocUserID,
+	saleType := "new member"
+	if sale.UserID > 0 {
+		// Membership renewal
+		saleType = "membership renewal"
+	}
+	h.logMessage("SuccessHelper: user ID %s %s %s %s %s %s %s\n",
+		saleType, sale.FirstName, sale.LastName, sale.Email,
 		sale.AssocFirstName, sale.AssocLastName, sale.AssocEmail)
 
 	if sale.UserID == 0 {
 		// A new member is registering.  We haven't created
 		// the member account(s) yet.
 		sale.TransactionType = database.TransactionTypeNewMember
-		h.Logger.Info(sale.TransactionType)
 		userID, assocUserID, createUserError :=
 			h.DB.CreateAccounts(sale, startDate, endDate)
 		if createUserError != nil {
@@ -592,14 +598,12 @@ func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSe
 			return
 		}
 
-		logMessage(h.Logger, "created users %d %d\n", userID, assocUserID)
+		h.logMessage("created users %d %d\n", userID, assocUserID)
 		sale.UserID = userID
 		sale.AssocUserID = assocUserID
 	} else {
 		// An existing member is renewing, possibly with an associate member.
 		sale.TransactionType = database.TransactionTypeRenewal
-
-		h.Logger.Info(sale.TransactionType)
 
 		// For a new member, various fields are set at this point, so set them
 		// for the renewing member(s) too.  The most important change is setting
@@ -631,7 +635,7 @@ func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSe
 	updateError1 := sale.Update(h.DB)
 	if updateError1 != nil {
 
-		logMessage(h.Logger, "successHelper: user ID %d - failed to update membership sales record %d - %v",
+		h.logMessage("successHelper: user ID %d - failed to update membership sales record %d - %v",
 			sale.UserID, sale.ID, updateError1)
 	}
 
@@ -653,7 +657,7 @@ func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSe
 
 	dlpError := h.DB.SetDateLastPaid(sale.UserID, paymentDate)
 	if dlpError != nil {
-		logMessage(h.Logger, "successHelper: user ID %d - %v\n", sale.UserID, dlpError)
+		h.logMessage("successHelper: user ID %d - %v\n", sale.UserID, dlpError)
 	}
 
 	// The ID of the user record of the ordinary member is in the sale record.  If
@@ -679,26 +683,26 @@ func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSe
 	if paymentError != nil {
 		em := fmt.Sprintf("error setting last payment for %d - %v",
 			sale.UserID, paymentError)
-		logMessage(h.Logger, "successHelper: user ID %d - %s", sale.UserID, em)
+		h.logMessage("successHelper: user ID %d - %s", sale.UserID, em)
 	}
 
 	// Set the members at address and friends at address in the ordinary member's record.
 	setMembersError := h.DB.SetMembersAtAddress(sale.UserID, membersAtAddress)
 	if setMembersError != nil {
-		logMessage(h.Logger, "successHelper: user ID %d - %v", sale.UserID, setMembersError)
+		h.logMessage("successHelper: user ID %d - %v", sale.UserID, setMembersError)
 	}
 
 	if h.Conf.EnableGiftaid && sale.Giftaid {
 		// Set the giftaid tick box, true or false.
 		giftAidError := h.DB.SetGiftaidField(sale.UserID, sale.Giftaid)
 		if giftAidError != nil {
-			logMessage(h.Logger, "successHelper: user ID %d - %v\n", sale.UserID, giftAidError)
+			h.logMessage("successHelper: user ID %d - %v\n", sale.UserID, giftAidError)
 		}
 	}
 
 	setFriendsError := h.DB.SetFriendsAtAddress(sale.UserID, friendsAtAddress)
 	if setFriendsError != nil {
-		logMessage(h.Logger, "successHelper: user ID %d - %v", sale.UserID, setFriendsError)
+		h.logMessage("successHelper: user ID %d - %v", sale.UserID, setFriendsError)
 	}
 
 	// If the member is a friend, tick the box.  The user may have been a friend last
@@ -707,7 +711,7 @@ func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSe
 	friendError := h.DB.SetFriendField(
 		sale.UserID, sale.Friend)
 	if friendError != nil {
-		logMessage(h.Logger, "successHelper: user ID %d - %v\n", sale.UserID, friendError)
+		h.logMessage("successHelper: user ID %d - %v\n", sale.UserID, friendError)
 	}
 
 	// Update the user's donation to society.
@@ -715,7 +719,7 @@ func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSe
 	if dsError != nil {
 		e := fmt.Errorf("error setting donation to society for %d - %v",
 			sale.UserID, dsError)
-		logMessage(h.Logger, "successHelper: user ID %d - %v\n", sale.UserID, e)
+		h.logMessage("successHelper: user ID %d - %v\n", sale.UserID, e)
 	}
 
 	// Update the user's donation to museum.
@@ -723,7 +727,7 @@ func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSe
 	if dmError != nil {
 		e := fmt.Errorf("error setting donation to museum for %d - %v",
 			sale.UserID, dmError)
-		logMessage(h.Logger, "successHelper: user ID %d - %v\n", sale.UserID, e)
+		h.logMessage("successHelper: user ID %d - %v\n", sale.UserID, e)
 	}
 
 	if h.Conf.EnableOtherMemberTypes && sale.AssocUserID > 0 {
@@ -732,20 +736,20 @@ func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSe
 		setFriendsError := h.DB.SetFriendField(sale.AssocUserID, sale.AssocFriend)
 		if setFriendsError != nil {
 			e := fmt.Errorf("error setting friend value for %d - %v", sale.AssocUserID, friendError)
-			logMessage(h.Logger, "successHelper: user ID %d - %v\n", sale.AssocUserID, e)
+			h.logMessage("successHelper: user ID %d - %v\n", sale.AssocUserID, e)
 		}
 
 		// Set the members at address in the associate member's record.
 		setMembersError := h.DB.SetMembersAtAddress(sale.AssocUserID, membersAtAddress)
 		if setMembersError != nil {
-			logMessage(h.Logger, "successHelper: user ID %d - %v", sale.AssocUserID, setMembersError)
+			h.logMessage("successHelper: user ID %d - %v", sale.AssocUserID, setMembersError)
 		}
 	}
 
 	// Commit the last few changes.
 	commit2Error := h.DB.Commit()
 	if commit2Error != nil {
-		logMessage(h.Logger, "successHelper: user ID %d - %v", sale.UserID, commit2Error)
+		h.logMessage("successHelper: user ID %d - %v", sale.UserID, commit2Error)
 	}
 
 	// Create the response page.
@@ -827,6 +831,11 @@ func (h *Handler) displayInitialSaleForm(w io.Writer) {
 		h.Logger.Info(executeError.Error())
 		fmt.Println(executeError)
 	}
+}
+
+func (h *Handler) logMessage(pattern string, a ...any) {
+	str := fmt.Sprintf(pattern, a...)
+	h.Logger.Info(str)
 }
 
 // Validation error messages - factored out to support unit testing.
@@ -1016,11 +1025,6 @@ func getTickBox(value string) (bool, string, string) {
 	default:
 		return false, "off", "unchecked"
 	}
-}
-
-func logMessage(logger *slog.Logger, pattern string, a ...any) {
-	str := fmt.Sprintf(pattern, a...)
-	logger.Info(str)
 }
 
 const paymentPageTemplateStr = `
