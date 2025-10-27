@@ -1072,9 +1072,139 @@ func TestSetLastPayment(t *testing.T) {
 		// 	return
 		// }
 
-		err := db.SetLastPayment(user.ID, 2.5)
+		setError := db.SetLastPayment(user.ID, 2.5)
+		if setError != nil {
+			t.Error(setError)
+			continue
+		}
+
+		fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("VALUE_OF_LAST_PAYMENT")
+		if fieldError != nil {
+			t.Error(fieldError)
+			continue
+		}
+
+		p, getError := GetUserDataField[float64](db, fieldID, user.ID)
+		if getError != nil {
+			t.Error(getError)
+			continue
+		}
+
+		if p != 2.5 {
+			t.Errorf("%s: want 2.5 got %f", db.Config.Type, p)
+			continue
+		}
+	}
+}
+
+// TestSetLastPayment checks SetLastPayment.
+func TestSetDonationToSociety(t *testing.T) {
+
+	for _, dbType := range databaseList {
+
+		db, connError := OpenDBForTesting(dbType)
+
+		if connError != nil {
+			t.Error(connError)
+			return
+		}
+
+		txError := db.BeginTx()
+		if txError != nil {
+			t.Error(txError)
+			return
+		}
+		defer db.Rollback()
+		defer db.CloseAndDelete()
+
+		prepError := PrepareTestTables(db)
+		if prepError != nil {
+			t.Error(prepError)
+		}
+
+		user, _, _, _, umError := createTestUserEtc(db)
+		if umError != nil {
+			em := fmt.Sprintf("%s: %v", db.Config.Type, umError)
+			t.Error(em)
+			return
+		}
+
+		err := db.SetDonationToSociety(user.ID, 2.5)
 		if err != nil {
 			t.Error(err)
+		}
+
+		fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("VALUE_OF_DONATION_TO_LDLHS")
+		if fieldError != nil {
+			t.Error(fieldError)
+			continue
+		}
+
+		p, getError := GetUserDataField[float64](db, fieldID, user.ID)
+		if getError != nil {
+			t.Error(getError)
+			continue
+		}
+
+		if p != 2.5 {
+			t.Errorf("%s: want 2.5 got %f", db.Config.Type, p)
+			continue
+		}
+	}
+}
+
+// TestSetLastPayment checks SetLastPayment.
+func TestSetDonationToMuseum(t *testing.T) {
+
+	for _, dbType := range databaseList {
+
+		db, connError := OpenDBForTesting(dbType)
+
+		if connError != nil {
+			t.Error(connError)
+			return
+		}
+
+		txError := db.BeginTx()
+		if txError != nil {
+			t.Error(txError)
+			return
+		}
+		defer db.Rollback()
+		defer db.CloseAndDelete()
+
+		prepError := PrepareTestTables(db)
+		if prepError != nil {
+			t.Error(prepError)
+		}
+
+		user, _, _, _, umError := createTestUserEtc(db)
+		if umError != nil {
+			em := fmt.Sprintf("%s: %v", db.Config.Type, umError)
+			t.Error(em)
+			return
+		}
+
+		err := db.SetDonationToMuseum(user.ID, 2.5)
+		if err != nil {
+			t.Error(err)
+		}
+
+		fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("VALUE_OF_DONATION_TO_THE_MUSEUM")
+		if fieldError != nil {
+			t.Error(fieldError)
+			continue
+		}
+
+		p, getError := GetUserDataField[float64](db, fieldID, user.ID)
+		if getError != nil {
+			t.Error(getError)
+			continue
+		}
+
+		if p != 2.5 {
+			t.Errorf("%s: want 2.5 got %f", db.Config.Type, p)
+			continue
 		}
 	}
 }

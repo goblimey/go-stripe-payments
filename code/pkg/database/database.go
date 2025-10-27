@@ -255,7 +255,8 @@ func (ms *MembershipSale) TotalForDisplay() string {
 }
 
 // OrdinaryMembershipFeeForDisplay gets the ordinary membership fee
-// for a display - a number to two decimal places.
+// for display - a number to two decimal places.  If the value is
+// zero, the result is an empty string.
 func (ms *MembershipSale) OrdinaryMemberFeeForDisplay() string {
 	if ms.OrdinaryMemberFeePaid == 0 {
 		return ""
@@ -264,14 +265,10 @@ func (ms *MembershipSale) OrdinaryMemberFeeForDisplay() string {
 	return fmt.Sprintf("£%.2f", ms.OrdinaryMemberFeePaid)
 }
 
-// OrdinaryMemberFriendFeeForDisplay gets the ordinary member's
+// FriendFeeForDisplay gets the ordinary member's
 // museum friend fee for display - a number to two decimal places.
 // If the member is not a friend, it returns "0.0".
 func (ms *MembershipSale) FriendFeeForDisplay() string {
-
-	if !ms.Friend {
-		return ""
-	}
 
 	if ms.FriendFeePaid == 0 {
 		return ""

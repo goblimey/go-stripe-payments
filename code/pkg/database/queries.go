@@ -2051,7 +2051,7 @@ func (db *Database) SetLastPayment(userID int64, payment float64) error {
 // SetDonationToSociety sets the donation to society field in adm_user_data.
 // It's assumed that a transaction is already set up in the db object.
 func (db *Database) SetDonationToSociety(userID int64, payment float64) error {
-	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("DONATION_TO_SOCIETY")
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("VALUE_OF_DONATION_TO_LDLHS")
 	if fieldError != nil {
 		return fieldError
 	}
@@ -2062,7 +2062,7 @@ func (db *Database) SetDonationToSociety(userID int64, payment float64) error {
 // SetDonationToMuseum sets the donation to the musum.
 // It's assumed that a transaction is already set up in the db object.
 func (db *Database) SetDonationToMuseum(userID int64, payment float64) error {
-	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("DONATION_TO_MUSEUM")
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("VALUE_OF_DONATION_TO_THE_MUSEUM")
 	if fieldError != nil {
 		return fieldError
 	}

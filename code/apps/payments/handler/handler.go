@@ -1027,6 +1027,8 @@ func getTickBox(value string) (bool, string, string) {
 	}
 }
 
+// paymentPageTemplateStr defines the initial payment form that collects
+// the data for the sale.  It's driven by a SaleForm.
 const paymentPageTemplateStr = `
 <html>
 <head>
@@ -1109,9 +1111,9 @@ const paymentPageTemplateStr = `
 
 			{{if .EnableGiftaid}}
 				<tr>
-					<td style='border: 0'>Giftaid:</td>
+					<td style='border: 0'>Gift Aid:</td>
 					<td style='border: 0 '>
-						<input style='transform: scale(1.5);' type='checkbox' name='giftaid' {{.GiftaidOutput}} />
+						<input style='transform: scale(1.5);' type='checkbox' name='Gif Aid' {{.GiftaidOutput}} />
 					</td>
 					<td style='border: 0'>&nbsp;</td>
 				</tr>
@@ -1120,7 +1122,7 @@ const paymentPageTemplateStr = `
 				</tr>
 				<tr>
 					<td style='border: 0' colspan='3'>
-						Tick the Giftaid box if you are currently a UK tax payer and 
+						Tick the Gift Aid box if you are currently a UK tax payer and 
 						consent to Gift Aid.
 						If you pay less income tax and/or capital gains tax 
 						than the amount of Gift Aid paid on all your donations, 
@@ -1180,6 +1182,8 @@ const paymentPageTemplateStr = `
 </html>
 `
 
+// paymentConfirmationPageTemplate defines the payment confirmation
+// page.  Data is taken from a SaleForm object.
 const paymentConfirmationPageTemplate = `
 <html>
     <head><title>payment confirmation</title></head>
@@ -1266,6 +1270,8 @@ const paymentConfirmationPageTemplate = `
 	</body>
 `
 
+// successPageTemplateStr defines the page shown on a successful sale.
+// It takes data from a Membershipsale object.
 const successPageTemplateStr = `
 <html>
 	<head><title>Payment Successful</title></head>
