@@ -320,6 +320,14 @@ func (h *Handler) checkoutHelper(w http.ResponseWriter, r *http.Request) {
 	ms.AssocEmail = strings.TrimSpace(r.PostFormValue("assoc_email"))
 	ms.PaymentStatus = database.PaymentStatusPending
 
+	if len(ms.AssocFirstName) > 0 {
+		h.logMessage("checkoutHelper: membership_sale id %d - %s %s, %s %s",
+			ms.ID, ms.FirstName, ms.LastName, ms.AssocFirstName, ms.AssocLastName)
+	} else {
+		h.logMessage("checkoutHelper: membership_sale id %d - %s %s",
+			ms.ID, ms.FirstName, ms.LastName)
+	}
+
 	if ms.EnableOtherMemberTypes {
 		ms.OrdinaryMemberFeePaid = h.OrdinaryMembershipFee
 		if ms.Friend {
@@ -355,7 +363,7 @@ func (h *Handler) checkoutHelper(w http.ResponseWriter, r *http.Request) {
 	invoicingEnabled := true
 
 	description := fmt.Sprintf(
-		"%s membership %d", h.Conf.OrganisationName, h.MembershipYear)
+		"%s membership year %d", h.Conf.OrganisationName, h.MembershipYear)
 
 	invoiceData := stripe.CheckoutSessionInvoiceCreationInvoiceDataParams{
 		Description: &description,
@@ -484,6 +492,8 @@ func (h *Handler) Success(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.logMessage("Success: stripe session ID %s", sessionID)
+
 	connError := h.connectToDB()
 	if connError != nil {
 		h.reportError(w, h.PrePaymentErrorHTML, connError)
@@ -511,14 +521,14 @@ func (h *Handler) Success(w http.ResponseWriter, r *http.Request) {
 	}
 	yearEnd := time.Date(startTime.Year(), time.December, 31, 23, 59, 59, 999999999, londonTime)
 
-	h.successHelper(w, r, stripeSession, sessionID, startTime, yearEnd, time.Now())
+	h.successHelper(w, stripeSession, sessionID, startTime, yearEnd, time.Now())
 
 	// The helper should send an HTTP response so we shouldn't get to here.
 }
 
 // successHelper completes the sale.  It's separated out and the start and end dates are supplied to
 // support unit testing.
-func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSession *stripe.CheckoutSession, sessionID string, startDate, endDate, paymentDate time.Time) {
+func (h *Handler) successHelper(w http.ResponseWriter, stripeSession *stripe.CheckoutSession, sessionID string, startDate, endDate, paymentDate time.Time) {
 
 	h.logMessage("successHelper: year ending %v", endDate)
 
@@ -540,6 +550,8 @@ func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSe
 		return
 	}
 
+	h.logMessage("successHelper: sales id %d", salesID)
+
 	// Get the membership sales record.  The ClientReferenceID in the payment
 	// session is the ID of the sales record.
 	sale, fetchError := h.DB.GetMembershipSale(salesID)
@@ -549,6 +561,14 @@ func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSe
 		h.DB.Rollback()
 		h.reportError(w, h.PostPaymentErrorHTML, fetchError)
 		return
+	}
+
+	if len(sale.AssocFirstName) > 0 {
+		h.logMessage("successHelper: membership_sale id %d - %s %s, %s %s",
+			sale.ID, sale.FirstName, sale.LastName, sale.AssocFirstName, sale.AssocLastName)
+	} else {
+		h.logMessage("successHelper: membership_sale id %d - %s %s",
+			sale.ID, sale.FirstName, sale.LastName)
 	}
 
 	// Add the reference data (quoted by the HTML pages)
@@ -580,9 +600,15 @@ func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSe
 		// Membership renewal
 		saleType = "membership renewal"
 	}
-	h.logMessage("SuccessHelper: user ID %s %s %s %s %s %s %s\n",
-		saleType, sale.FirstName, sale.LastName, sale.Email,
-		sale.AssocFirstName, sale.AssocLastName, sale.AssocEmail)
+
+	if len(sale.AssocFirstName) > 0 {
+		h.logMessage("SuccessHelper: user ID %s %s %s %s %s %s %s\n",
+			saleType, sale.FirstName, sale.LastName, sale.Email,
+			sale.AssocFirstName, sale.AssocLastName, sale.AssocEmail)
+	} else {
+		h.logMessage("SuccessHelper: user ID %s %s %s %s\n",
+			saleType, sale.FirstName, sale.LastName, sale.Email)
+	}
 
 	if sale.UserID == 0 {
 		// A new member is registering.  We haven't created
@@ -635,7 +661,7 @@ func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSe
 	updateError1 := sale.Update(h.DB)
 	if updateError1 != nil {
 
-		h.logMessage("successHelper: user ID %d - failed to update membership sales record %d - %v",
+		h.errorMessage("successHelper: user ID %d - failed to update membership sales record %d - %v",
 			sale.UserID, sale.ID, updateError1)
 	}
 
@@ -657,7 +683,7 @@ func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSe
 
 	dlpError := h.DB.SetDateLastPaid(sale.UserID, paymentDate)
 	if dlpError != nil {
-		h.logMessage("successHelper: user ID %d - %v\n", sale.UserID, dlpError)
+		h.errorMessage("successHelper: user ID %d - %v\n", sale.UserID, dlpError)
 	}
 
 	// The ID of the user record of the ordinary member is in the sale record.  If
@@ -683,26 +709,26 @@ func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSe
 	if paymentError != nil {
 		em := fmt.Sprintf("error setting last payment for %d - %v",
 			sale.UserID, paymentError)
-		h.logMessage("successHelper: user ID %d - %s", sale.UserID, em)
+		h.errorMessage("successHelper: user ID %d - %s", sale.UserID, em)
 	}
 
 	// Set the members at address and friends at address in the ordinary member's record.
 	setMembersError := h.DB.SetMembersAtAddress(sale.UserID, membersAtAddress)
 	if setMembersError != nil {
-		h.logMessage("successHelper: user ID %d - %v", sale.UserID, setMembersError)
+		h.errorMessage("successHelper: user ID %d - %v", sale.UserID, setMembersError)
 	}
 
 	if h.Conf.EnableGiftaid && sale.Giftaid {
 		// Set the giftaid tick box, true or false.
 		giftAidError := h.DB.SetGiftaidField(sale.UserID, sale.Giftaid)
 		if giftAidError != nil {
-			h.logMessage("successHelper: user ID %d - %v\n", sale.UserID, giftAidError)
+			h.errorMessage("successHelper: user ID %d - %v\n", sale.UserID, giftAidError)
 		}
 	}
 
 	setFriendsError := h.DB.SetFriendsAtAddress(sale.UserID, friendsAtAddress)
 	if setFriendsError != nil {
-		h.logMessage("successHelper: user ID %d - %v", sale.UserID, setFriendsError)
+		h.errorMessage("successHelper: user ID %d - %v", sale.UserID, setFriendsError)
 	}
 
 	// If the member is a friend, tick the box.  The user may have been a friend last
@@ -711,7 +737,7 @@ func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSe
 	friendError := h.DB.SetFriendField(
 		sale.UserID, sale.Friend)
 	if friendError != nil {
-		h.logMessage("successHelper: user ID %d - %v\n", sale.UserID, friendError)
+		h.errorMessage("successHelper: user ID %d - %v\n", sale.UserID, friendError)
 	}
 
 	// Update the user's donation to society.
@@ -719,7 +745,7 @@ func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSe
 	if dsError != nil {
 		e := fmt.Errorf("error setting donation to society for %d - %v",
 			sale.UserID, dsError)
-		h.logMessage("successHelper: user ID %d - %v\n", sale.UserID, e)
+		h.errorMessage("successHelper: user ID %d - %v\n", sale.UserID, e)
 	}
 
 	// Update the user's donation to museum.
@@ -727,7 +753,7 @@ func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSe
 	if dmError != nil {
 		e := fmt.Errorf("error setting donation to museum for %d - %v",
 			sale.UserID, dmError)
-		h.logMessage("successHelper: user ID %d - %v\n", sale.UserID, e)
+		h.errorMessage("successHelper: user ID %d - %v\n", sale.UserID, e)
 	}
 
 	if h.Conf.EnableOtherMemberTypes && sale.AssocUserID > 0 {
@@ -736,20 +762,20 @@ func (h *Handler) successHelper(w http.ResponseWriter, r *http.Request, stripeSe
 		setFriendsError := h.DB.SetFriendField(sale.AssocUserID, sale.AssocFriend)
 		if setFriendsError != nil {
 			e := fmt.Errorf("error setting friend value for %d - %v", sale.AssocUserID, friendError)
-			h.logMessage("successHelper: user ID %d - %v\n", sale.AssocUserID, e)
+			h.errorMessage("successHelper: user ID %d - %v\n", sale.AssocUserID, e)
 		}
 
 		// Set the members at address in the associate member's record.
 		setMembersError := h.DB.SetMembersAtAddress(sale.AssocUserID, membersAtAddress)
 		if setMembersError != nil {
-			h.logMessage("successHelper: user ID %d - %v", sale.AssocUserID, setMembersError)
+			h.errorMessage("successHelper: user ID %d - %v", sale.AssocUserID, setMembersError)
 		}
 	}
 
 	// Commit the last few changes.
 	commit2Error := h.DB.Commit()
 	if commit2Error != nil {
-		h.logMessage("successHelper: user ID %d - %v", sale.UserID, commit2Error)
+		h.errorMessage("successHelper: user ID %d - %v", sale.UserID, commit2Error)
 	}
 
 	// Create the response page.
@@ -836,6 +862,11 @@ func (h *Handler) displayInitialSaleForm(w io.Writer) {
 func (h *Handler) logMessage(pattern string, a ...any) {
 	str := fmt.Sprintf(pattern, a...)
 	h.Logger.Info(str)
+}
+
+func (h *Handler) errorMessage(pattern string, a ...any) {
+	str := fmt.Sprintf(pattern, a...)
+	h.Logger.Error(str)
 }
 
 // Validation error messages - factored out to support unit testing.
@@ -1026,366 +1057,3 @@ func getTickBox(value string) (bool, string, string) {
 		return false, "off", "unchecked"
 	}
 }
-
-// paymentPageTemplateStr defines the initial payment form that collects
-// the data for the sale.  It's driven by a SaleForm.
-const paymentPageTemplateStr = `
-<html>
-<head>
-    <title>Membership Payment System</title>
-</head>
-	<body style='font-size: 100%'>
-		<h2>{{.OrganisationName}}</h2>
-
-		<h3>Membership Year {{.MembershipYear}}</h3>
-
-		<span style="color:red;">{{.GeneralErrorMessage}}</span>
-		<p>
-			To become a member or renew your membership
-			using a credit or debit card,
-			please fill in the form below and press the Submit button.
-		</p>
-	{{if .EnableOtherMemberTypes}}
-		<p>
-			If you are also paying for an Associate Member
-			(a second member at the same address)
-			please supply their details too,
-			otherwise leave those boxes blank.
-		</p>
-	{{end}}
-		<p>
-			Our fees this year are:
-		<ul>
-			<li>Ordinary member: {{.OrdinaryMemberFeeForDisplay}}</li>
-		{{if .EnableOtherMemberTypes}}
-			<li>Associate member at the same address: {{.AssocFeeForDisplay}}</li>
-			<li>Friend of the Leatherhead museum: {{.FriendFeeForDisplay}}</li>
-		{{end}}
-		</ul>
-		</p>
-		<p>
-			&nbsp;
-		</p>
-		<form action="/displayPaymentForm" method="POST">	
-			<table style='font-size: 100%'>
-				<tr>
-					<td style='border: 0'>First Name:</td>
-					<td style='border: 0'><input type='text' size='40' name='first_name' value='{{.FirstName}}'></td>
-					<td style='border: 0'><span style="color:red;">{{.FirstNameErrorMessage}}</span></td>
-				</tr>
-
-				<tr>
-					<td style='border: 0'>Last Name:</td>
-					<td style='border: 0'><input type='text' size='40' name='last_name' value='{{.LastName}}'></td>
-					<td style='border: 0'><span style="color:red;">{{.LastNameErrorMessage}}</span></td>
-				</tr>
-
-				<tr>
-					<td style='border: 0'>Email Address:</td>
-					<td style='border: 0'><input type='text' size='40' name='email' value='{{.Email}}'></td>
-					<td style='border: 0'><span style="color:red;">{{.EmailErrorMessage}}</span></td>
-				</tr>
-			{{if .EnableOtherMemberTypes}}
-				<tr>
-					<td style='border: 0'>Friend of the Museum:</td>
-					<td style='border: 0; '>
-						<input style='transform: scale(1.5);' type='checkbox' name='friend' {{.FriendOutput}} />
-					</td>
-					<td style='border: 0'>&nbsp;</td>
-				</tr>
-			{{end}}
-
-				<tr>
-					<td style='border: 0'>Donation:</td>
-					<td style='border: 0'><input type='text' size='40' name='donation_to_society' value='{{.DonationToSocietyForDisplay}}'></td>
-					<td style='border: 0;'><span style="color:red;">{{.DonationToSocietyErrorMessage}}</span></td>
-				</tr>
-
-			{{if .EnableOtherMemberTypes}}
-				<tr>
-					<td style='border: 0'>Donation to the Museum:</td>
-					<td style='border: 0'><input type='text' size='40' name='donation_to_museum' value='{{.DonationToMuseumForDisplay}}'></td>
-					<td style='border: 0'><span style="color:red;">{{.DonationToMuseumErrorMessage}}</span></td>
-				</tr>
-			{{end}}
-
-			{{if .EnableGiftaid}}
-				<tr>
-					<td style='border: 0'>Gift Aid:</td>
-					<td style='border: 0 '>
-						<input style='transform: scale(1.5);' type='checkbox' name='Gif Aid' {{.GiftaidOutput}} />
-					</td>
-					<td style='border: 0'>&nbsp;</td>
-				</tr>
-				<tr>
-					<td style='border: 0' colspan='3'>&nbsp;</td>
-				</tr>
-				<tr>
-					<td style='border: 0' colspan='3'>
-						Tick the Gift Aid box if you are currently a UK tax payer and 
-						consent to Gift Aid.
-						If you pay less income tax and/or capital gains tax 
-						than the amount of Gift Aid paid on all your donations, 
-						you are liable to pay the difference to HMRC.
-					</td>
-				</tr>
-			{{end}}
-				<tr>
-					<td style='border: 0' colspan='3'>&nbsp;</td>
-				</tr>
-				
-				<tr>
-					<td style='border: 0' colspan='3'>&nbsp;</td>
-				</tr>
-
-			{{if .EnableOtherMemberTypes}}
-				<tr>
-					<td style='border: 0' colspan='3'>
-						If there are two members at your address, 
-						fill in the other member's details below:
-					</td>
-				</tr>
-				<tr>
-					<td style='border: 0'>Associate First Name:</td>
-					<td style='border: 0'><input type='text' size='40' name='assoc_first_name' value='{{.AssocFirstName}}'></td>
-					<td style='border: 0'><span style="color:red;">{{.AssocFirstNameErrorMessage}}</span></td>
-				</tr>
-
-				<tr>
-					<td style='border: 0'>Associate Last Name:</td>
-					<td style='border: 0'><input type='text' size='40' name='assoc_last_name' value='{{.AssocLastName}}'></td>
-					<td style='border: 0'><span style="color:red;">{{.AssocLastNameErrorMessage}}</span></td>
-				</tr>
-
-				<tr>
-					<td style='border: 0'>Email Address (optional):</td>
-					<td style='border: 0'><input type='text' size='40' name='assoc_email' value='{{.AssocEmail}}'></td>
-					<td style='border: 0'>&nbsp;</td>
-				</tr>
-				<tr>
-					<td style='border: 0'>Friend of the Museum:</td>
-					<td style='border: 0'>
-						<input style='transform: scale(1.5);' type='checkbox' name='assoc_friend' {{.AssocFriendOutput}} />
-					</td>
-					<td style='border: 0'>&nbsp;</td>
-				</tr>
-
-				<tr>
-					<td style='border: 0' colspan='3'>&nbsp;</td>
-				</tr>
-			{{end}}
-
-			</table>
-			<input type="submit" value="Submit">
-		</form>
-	</body>
-</html>
-`
-
-// paymentConfirmationPageTemplate defines the payment confirmation
-// page.  Data is taken from a SaleForm object.
-const paymentConfirmationPageTemplate = `
-<html>
-    <head><title>payment confirmation</title></head>
-	<body style='font-size: 100%'>
-		<h2>{{.OrganisationName}}</h2>
-		<h3>Membership Fee for {{.MembershipYear}}</h3>
-		<p>
-			If you are happy with the total,
-			please press the submit button.
-			You will be transferred to the Stripe payment system
-			to make the payment.
-		</p>
-		<form action="/checkout" method="POST">
-
-			<table>
-				<tr>
-					<td style='border: 0'>ordinary membership</td>
-					<td style='border: 0'>{{.OrdinaryMemberFeeForDisplay}}</td>
-				</tr>
-			{{if .Friend}}
-				<tr>
-					<td style='border: 0'>friend of the museum</td>
-					<td style='border: 0'>{{.FriendFeeForDisplay}}</td>
-				</tr>
-			{{end}}
-			{{if ne .AssocFirstName ""}}
-				<tr>
-					<td style='border: 0'>associate member</td>
-					<td style='border: 0'>{{.AssocFeeForDisplay}}</td>
-				</tr>
-			{{if .AssocFriend}}
-				<tr>
-					<td style='border: 0'>associate is a friend of the museum</td>
-					<td style='border: 0'>{{.FriendFeeForDisplay}}</td>
-				</tr>
-			{{end}}
-			{{end}}
-
-			{{if gt .DonationToSociety 0.0}}
-			<tr>
-				<td style='border: 0'>donation to the Society</td>
-				<td style='border: 0'>{{.DonationToSocietyForDisplay}}</td>
-			</tr>
-			{{end}}
-
-			{{if gt .DonationToMuseum 0.0}}
-			<tr>
-				<td style='border: 0'>donation to the museum</td>
-				<td style='border: 0'>{{.DonationToMuseumForDisplay}}</td>
-			</tr>
-			{{end}}
-
-			<tr>
-				<td style='border: 0'><b>Total</b></td>
-				<td style='border: 0'>{{.TotalForDisplay}}</td>
-			</tr>
-
-			</table>
-			<input type='hidden' name='first_name' value={{.FirstName}}>
-			<input type='hidden' name='last_name' value={{.LastName}}>
-			<input type='hidden' name='email' value={{.Email}}>
-		{{if .Friend}}
-			<input type='hidden' name='friend' value='on'>
-		{{end}}
-		{{if ne .AssocFirstName ""}}
-			<input type='hidden' name='assoc_first_name' value={{.AssocFirstName}}>
-			<input type='hidden' name='assoc_last_name' value={{.AssocLastName}}>
-			<input type='hidden' name='assoc_email' value={{.AssocEmail}}>
-		{{if .AssocFriend}}
-			<input type='hidden' name='assoc_friend' value='on'>
-		{{end}}
-		{{end}}
-		{{if .Giftaid}}
-			<input type='hidden' name='giftaid' value='on'>
-		{{end}}
-		{{if gt .DonationToSociety 0.0}}
-			<input type='hidden' name='donation_to_society' value='{{.DonationToSociety}}'>
-		{{end}}
-		{{if gt .DonationToMuseum 0.0}}
-			<input type='hidden' name='donation_to_museum' value='{{.DonationToMuseum}}'>
-		{{end}}
-			<input type="submit" value="Submit">
-		</form>
-	</body>
-`
-
-// successPageTemplateStr defines the page shown on a successful sale.
-// It takes data from a Membershipsale object.
-const successPageTemplateStr = `
-<html>
-	<head><title>Payment Successful</title></head>
-    <body style='font-size: 100%'>
-	<h2>{{.OrganisationName}}</h2>
-        <p>
-			Thank you for your payment.
-			You are now a member until the end of {{.MembershipYear}}.
-		</p>
-		<p>
-			<table>
-				<tr>
-					<td style='border: 0'>ordinary membership</td>
-					<td style='border: 0'>{{.OrdinaryMemberFeeForDisplay}}</td>
-				</tr>
-			{{if .Friend}}
-				<tr>
-					<td style='border: 0'>friend of the museum</td>
-					<td style='border: 0'>{{.FriendFeeForDisplay}}</td>
-				</tr>
-			{{end}}
-			{{if ne .AssocFirstName ""}}
-				<tr>
-					<td style='border: 0'>associate member</td>
-					<td style='border: 0'>{{.AssocFeeForDisplay}}</td>
-				</tr>
-			{{if .AssocFriend}}
-				<tr>
-					<td style='border: 0'>associate is friend of the museum</td>
-					<td style='border: 0'>{{.AssocFriendFeeForDisplay}}</td>
-				</tr>
-			{{end}}
-			{{end}}
-
-			{{if gt .DonationToMuseum 0.0}}
-			<tr>
-				<td style='border: 0'>donation to the Society</td>
-				<td style='border: 0'>{{.DonationToSocietyForDisplay}}</td>
-			</tr>
-			{{end}}
-
-			{{if gt .DonationToMuseum 0.0}}
-			<tr>
-				<td style='border: 0'>donation to the museum</td>
-				<td style='border: 0'>{{.DonationToMuseumForDisplay}}</td>
-			</tr>
-			{{end}}
-
-			<tr>
-				<td style='border: 0'><b>Total</b></td>
-				<td style='border: 0'>{{.TotalForDisplay}}</td>
-			</tr>
-
-			</table>
-		</p>
-		<p>
-		    If you have any questions, please email
-		    <a href="mailto:{{.EmailAddressForQuestions}}">
-			    {{.EmailAddressForQuestions}}
-			</a>.
-		</p>
-    </body>
-</html>
-`
-
-const cancelHTML = `
-<html>
-  <head><title>cancelled</title></head>
-  <body style='font-size: 100%'>
-    <h1>Payment cancelled</h1>
-  </body>
-</html>
-`
-
-// prePaymentErrorHTMLPattern defines the default error message page before the
-// customer has paid (not as bad as a failure after).  It contains configurable
-// text but it may be used when things are going badly wrong.  It may be the
-// template system that's going wrong, so we don't use the template system to
-// render the page.  We just expand the pattern using Sprintf (which means that
-// "100%" must be presented as "100%%").
-const prePaymentErrorHTMLPattern = `
-<html>
-    <head><title>error</title></head>
-    <body style='font-size: 100%%'>
-		<p>
-			Internal error.  Please try again.
-			If the error persists, please email
-			<a href="mailto:%s">
-				%s
-			</a>
-		</p>
-    </body>
-</html>
-`
-
-// postPaymentErrorHTMLPattern defines the default error message page after the
-// customer has paid.  It contains configurable text but it may be used when things
-// are going badly wrong.  It may be the template system that's going wrong, so we
-// don't use the template system to render the page.  We just expand the pattertn
-// using Sprintf (which means that "100%" must be presented as "100%%").
-//
-// The customer is now due a refund so the given email address should be somebody
-// who can arrange that, eg the treasurer.
-const postPaymentErrorHTMLPattern = `
-<html>
-    <head><title>error</title></head>
-    <body style='font-size: 100%%'>
-		<p>
-			Something went wrong after you had paid.
-			Please
-			<a href="mailto:%s">
-				%s
-			</a>
-		</p>
-    </body>
-</html>
-`
