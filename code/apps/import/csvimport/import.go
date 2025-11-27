@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"log/slog"
 	"os"
@@ -48,7 +49,7 @@ func init() {
 	compressSpaceRegex = regexp.MustCompile("[ \t\n]+")
 }
 
-func Import(filename string, lastYearOfMembership int) ([]CSVLine, error) {
+func Import(file fs.File, lastYearOfMembership int) ([]CSVLine, error) {
 
 	// records is the returned object.
 	records := make([]CSVLine, 0)
@@ -62,16 +63,6 @@ func Import(filename string, lastYearOfMembership int) ([]CSVLine, error) {
 	membershipEnd := time.Date(lastYearOfMembership, time.March, 31, 23, 59, 59, 999999999, ukTime)
 	// Year start is 1st April in the previous year.
 	membershipStart := time.Date(lastYearOfMembership-1, time.April, 1, 0, 0, 0, 0, ukTime)
-
-	// OPen the file and import the CSV data.
-	file, openError := os.Open(filename)
-
-	// Checks for the error
-	if openError != nil {
-		m := "Error while reading " + filename + "\n"
-		log.Fatal(m, openError)
-		return records, openError
-	}
 
 	// Closes the file
 	defer file.Close()
@@ -179,9 +170,9 @@ func getLine(field []string) (*CSVLine, error) {
 	return &record, nil
 }
 
-func CreateRecords(db *database.Database, filename string, membershipYearEnd int) {
+func CreateRecords(db *database.Database, file fs.File, membershipYearEnd int) {
 
-	records, importError := Import(filename, membershipYearEnd)
+	records, importError := Import(file, membershipYearEnd)
 
 	if importError != nil {
 		slog.Error(importError.Error())

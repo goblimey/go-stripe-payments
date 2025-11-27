@@ -5,6 +5,7 @@ import (
 	"log"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/goblimey/go-stripe-payments/code/pkg/database"
@@ -15,8 +16,9 @@ import (
 
 var databaseList = []string{"postgres", "sqlite"}
 
-// TestAdmidioEmailFilter checks the query used by the Admidio system to get the list of members to
-// email - used by message_write.php in /var/www/html/members.sihg.org.uk/admidio/adm_program/modules/messages.
+// TestAdmidioEmailFilter checks the query used by the Admidio system to get the list of members
+// to email - used by message_write.php in
+// /var/www/html/members.sihg.org.uk/admidio/adm_program/modules/messages.
 func TestAdmidioEmailFilter(t *testing.T) {
 
 	ukTime, err := time.LoadLocation("Europe/London")
@@ -41,24 +43,204 @@ func TestAdmidioEmailFilter(t *testing.T) {
 	// The start of the day after the membership lapses.
 	dayAfter := time.Date(2026, time.April, 1, 0, 0, 0, 0, ukTime)
 
+	// sql1, sql2 etc filter the users. Each applies all the filters from the preceding
+	// query plus one more.
+
+	// sql1 fetches all the users, including the System user set up by PrepareTestTables.
+	const sqlTemplate1 = `
+		SELECT u.usr_id, u.usr_login_name, %s(firstName.usd_value, ''), %s(lastName.usd_value, '')
+		FROM adm_users as u
+		LEFT JOIN adm_user_fields as fieldFirstName
+				ON fieldFirstName.usf_name_intern = 'FIRST_NAME'
+		LEFT JOIN adm_user_data as firstName
+				ON firstName.usd_usr_id = u.usr_id
+			AND fieldFirstName.usf_id = firstName.usd_usf_id
+		LEFT JOIN adm_user_fields as fieldLastName
+				ON fieldLastName.usf_name_intern = 'LAST_NAME'
+		LEFT JOIN adm_user_data as lastName
+				ON lastName.usd_usr_id = u.usr_id
+			AND fieldLastName.usf_id = lastName.usd_usf_id;
+	`
+
+	// sql2 filters out users whose valid flag is not set - e3.
+	const sqlTemplate2 = `
+		SELECT u.usr_id, u.usr_login_name, %s(firstName.usd_value, ''), %s(lastName.usd_value, '')
+		FROM adm_users as u
+		LEFT JOIN adm_user_fields as fieldFirstName
+				ON fieldFirstName.usf_name_intern = 'FIRST_NAME'
+		LEFT JOIN adm_user_data as firstName
+				ON firstName.usd_usr_id = u.usr_id
+			AND fieldFirstName.usf_id = firstName.usd_usf_id
+		LEFT JOIN adm_user_fields as fieldLastName
+				ON fieldLastName.usf_name_intern = 'LAST_NAME'
+		LEFT JOIN adm_user_data as lastName
+				ON lastName.usd_usr_id = u.usr_id
+			AND fieldLastName.usf_id = lastName.usd_usf_id
+		where u.usr_valid = 't';
+	`
+
+	// sql3 also filters out users who do have Member status - System and un4
+	const sqlTemplate3 = `
+		SELECT u.usr_id, u.usr_login_name, %s(firstName.usd_value, ''), %s(lastName.usd_value, '')
+		FROM adm_users as u
+		LEFT JOIN adm_user_fields as fieldFirstName
+				ON fieldFirstName.usf_name_intern = 'FIRST_NAME'
+		LEFT JOIN adm_user_data as firstName
+				ON firstName.usd_usr_id = u.usr_id
+			AND fieldFirstName.usf_id = firstName.usd_usf_id
+		LEFT JOIN adm_user_fields as fieldLastName
+				ON fieldLastName.usf_name_intern = 'LAST_NAME'
+		LEFT JOIN adm_user_data as lastName
+				ON lastName.usd_usr_id = u.usr_id
+			AND fieldLastName.usf_id = lastName.usd_usf_id
+		INNER JOIN adm_members as m
+					ON u.usr_id = m.mem_usr_id
+		inner join adm_roles as r
+				ON r.rol_id = m.mem_rol_id
+			AND r.rol_name = 'Member'
+		where u.usr_valid = 't';
+	`
+
+	// sql4 also filters out users whose membership has lapsed.
+	const sqlTemplate4 = `
+		SELECT u.usr_id, u.usr_login_name, %s(firstName.usd_value, ''), %s(lastName.usd_value, '')
+		FROM adm_users as u
+		LEFT JOIN adm_user_fields as fieldFirstName
+			on fieldFirstName.usf_name_intern = 'FIRST_NAME'
+		LEFT JOIN adm_user_data as firstName
+			on firstName.usd_usr_id = u.usr_id
+			AND fieldFirstName.usf_id = firstName.usd_usf_id
+		LEFT JOIN adm_user_fields as fieldLastName
+			on fieldLastName.usf_name_intern = 'LAST_NAME'
+		LEFT JOIN adm_user_data as lastName
+			on lastName.usd_usr_id = u.usr_id
+			AND fieldLastName.usf_id = lastName.usd_usf_id
+		INNER JOIN adm_members as m
+				ON u.usr_id = m.mem_usr_id
+		inner join adm_roles as r
+				ON r.rol_id = m.mem_rol_id
+			AND r.rol_name = 'Member'
+		WHERE u.usr_valid = 't'
+		AND m.mem_end >= $1;
+	`
+
+	// sql5 also filters out people who have an email entry in adm_user_data but it's empty.
+	const sqlTemplate5 = `
+		SELECT u.usr_id, u.usr_login_name, %s(firstName.usd_value, ''), %s(lastName.usd_value, ''),
+		%s(email.usd_value, '')
+		FROM adm_users as u
+		LEFT JOIN adm_user_fields as fieldFirstName
+				ON fieldFirstName.usf_name_intern = 'FIRST_NAME'
+		LEFT JOIN adm_user_data as firstName
+				ON firstName.usd_usr_id = u.usr_id
+			AND fieldFirstName.usf_id = firstName.usd_usf_id
+		LEFT JOIN adm_user_fields as fieldLastName
+				ON fieldLastName.usf_name_intern = 'LAST_NAME'
+		LEFT JOIN adm_user_data as lastName
+				ON lastName.usd_usr_id = u.usr_id
+			AND fieldLastName.usf_id = lastName.usd_usf_id
+		INNER JOIN adm_members as m
+				ON u.usr_id = m.mem_usr_id
+		inner join adm_roles as r
+				ON r.rol_id = m.mem_rol_id
+			AND r.rol_name = 'Member'
+		LEFT JOIN adm_user_fields as fieldEmail
+			ON fieldEmail.usf_name_intern = 'EMAIL'
+			AND fieldEmail.usf_type = 'EMAIL'
+		INNER JOIN adm_user_data as email
+				ON email.usd_usr_id = u.usr_id
+			AND fieldEmail.usf_id = email.usd_usf_id
+			AND length(email.usd_value) > 0
+		WHERE u.usr_valid = 't'
+			AND m.mem_end >= $1;
+	`
+
+	// sql6 also filters out people who have no email entry in adm_user_data.
+	// This is the query used in the Admidio system, except for the last line,
+	// where m.mem_end is compared with CURRENT_DATE.
+	const sqlTemplate6 = `
+		SELECT u.usr_id, u.usr_login_name, %s(firstName.usd_value, ''), %s(lastName.usd_value, ''),
+		%s(email.usd_value, '')
+		FROM adm_users as u
+		LEFT JOIN adm_user_fields as fieldFirstName
+				ON fieldFirstName.usf_name_intern = 'FIRST_NAME'
+		LEFT JOIN adm_user_data as firstName
+				ON firstName.usd_usr_id = u.usr_id
+			AND fieldFirstName.usf_id = firstName.usd_usf_id
+		LEFT JOIN adm_user_fields as fieldLastName
+				ON fieldLastName.usf_name_intern = 'LAST_NAME'
+		LEFT JOIN adm_user_data as lastName
+				ON lastName.usd_usr_id = u.usr_id
+			AND fieldLastName.usf_id = lastName.usd_usf_id
+		INNER JOIN adm_members as m
+				ON u.usr_id = m.mem_usr_id
+		inner join adm_roles as r
+				ON r.rol_id = m.mem_rol_id
+			AND r.rol_name = 'Member'
+		LEFT JOIN adm_user_fields as fieldEmail
+			ON fieldEmail.usf_name_intern = 'EMAIL'
+			AND fieldEmail.usf_type = 'EMAIL'
+		INNER JOIN adm_user_data as email
+				ON email.usd_usr_id = u.usr_id
+			AND fieldEmail.usf_id = email.usd_usf_id
+			AND length(email.usd_value) > 0
+		LEFT JOIN adm_user_fields  as fieldPerm
+			ON fieldPerm.usf_name_intern = '` + database.EmailPermNameIntern + `'
+		INNER join adm_user_data as perm
+			ON perm.usd_usr_id = u.usr_id
+			AND perm.usd_usf_id = fieldPerm.usf_id
+			AND perm.usd_value = '1'
+		WHERE u.usr_valid = 't' 
+		AND m.mem_end >= $1;
+	`
+
 	for _, dbType := range databaseList {
 
-		db, connError := database.OpenDBForTesting(dbType)
-
+		db, connError := database.ConnectForTesting(dbType)
 		if connError != nil {
 			t.Error(connError)
 			return
 		}
 
-		db.BeginTx()
-
 		defer db.Rollback()
 		defer db.CloseAndDelete()
 
-		prepError := database.PrepareTestTables(db)
-		if prepError != nil {
-			t.Error(prepError)
+		var sql1, sql2, sql3, sql4, sql5, sql6 string
+		switch db.Config.Type {
+		case "postgres":
+			sql1 = fmt.Sprintf(sqlTemplate1, "COALESCE", "COALESCE")
+			sql2 = fmt.Sprintf(sqlTemplate2, "COALESCE", "COALESCE")
+			sql3 = fmt.Sprintf(sqlTemplate3, "COALESCE", "COALESCE")
+			sql4 = fmt.Sprintf(sqlTemplate4, "COALESCE", "COALESCE")
+			sql5 = fmt.Sprintf(sqlTemplate5, "COALESCE", "COALESCE", "COALESCE")
+			sql6 = fmt.Sprintf(sqlTemplate6, "COALESCE", "COALESCE", "COALESCE")
+		default:
+
+			sql1 = fmt.Sprintf(sqlTemplate1, "IFNULL", "IFNULL")
+			sql2 = fmt.Sprintf(sqlTemplate2, "IFNULL", "IFNULL")
+			sql3 = fmt.Sprintf(sqlTemplate3, "IFNULL", "IFNULL")
+			sql4 = fmt.Sprintf(sqlTemplate4, "IFNULL", "IFNULL")
+			sql5 = fmt.Sprintf(sqlTemplate5, "IFNULL", "IFNULL", "IFNULL")
+			sql6 = fmt.Sprintf(sqlTemplate6, "IFNULL", "IFNULL", "IFNULL")
 		}
+
+		// Count the number of users already set up in the DB.
+		r, e := db.Query(sql1)
+		if e != nil {
+			t.Error(e)
+			return
+		}
+
+		// Count the returned rows.
+		var usersAtStart int
+		for {
+			if !r.Next() {
+				break
+			}
+			usersAtStart++
+
+		}
+		r.Close()
 
 		un1, un1e := database.CreateUuid(db.Transaction, "usr_login_name", "adm_users")
 		if un1e != nil {
@@ -295,77 +477,48 @@ func TestAdmidioEmailFilter(t *testing.T) {
 			return
 		}
 
-		// sql1, sql2 etc filter the users. Each applies all the filters from the preceding
-		// query plus one more.
-
-		// sql1 fetches all the users, including the System user set up by PrepareTestTables.
-		const sqlTemplate1 = `
-			SELECT u.usr_id, u.usr_login_name, %s(firstName.usd_value, ''), %s(lastName.usd_value, '')
-			FROM adm_users as u
-			LEFT JOIN adm_user_fields as fieldFirstName
-				 ON fieldFirstName.usf_name_intern = 'FIRST_NAME'
-			LEFT JOIN adm_user_data as firstName
-				 ON firstName.usd_usr_id = u.usr_id
-				AND fieldFirstName.usf_id = firstName.usd_usf_id
-			LEFT JOIN adm_user_fields as fieldLastName
-				 ON fieldLastName.usf_name_intern = 'LAST_NAME'
-			LEFT JOIN adm_user_data as lastName
-				 ON lastName.usd_usr_id = u.usr_id
-				AND fieldLastName.usf_id = lastName.usd_usf_id;
-		`
-		var sql1 string
-		switch db.Config.Type {
-		case "postgres":
-			sql1 = fmt.Sprintf(sqlTemplate1, "COALESCE", "COALESCE")
-		default:
-			sql1 = fmt.Sprintf(sqlTemplate1, "IFNULL", "IFNULL")
-		}
+		// Now we can run the test.
 
 		rows1, selectError1 := db.Query(sql1)
 		if selectError1 != nil {
 			t.Error(selectError1)
-			return
 		}
 
-		// Count the returned rows.
+		// Count the returned rows and watch the names - un3 should not appear.
 		var n1 int
 		for {
 			if !rows1.Next() {
 				break
 			}
-			n1++
 
+			var u database.User
+			var fn, ln string
+
+			ue := rows1.Scan(&u.ID, &u.LoginName, &fn, &ln)
+			if ue != nil {
+				t.Error(ue)
+				return
+			}
+
+			// When the database is postgres, this test depends heavily on what other
+			// testing has left users in the DB.  To avoid this problem, only count
+			// the users that we have just created.
+
+			if u.LoginName == un1 ||
+				u.LoginName == un2 ||
+				u.LoginName == un3 ||
+				u.LoginName == un4 ||
+				u.LoginName == un5 ||
+				u.LoginName == un6 ||
+				u.LoginName == un7 {
+
+				n1++
+			}
 		}
-		rows1.Close()
 
-		if n1 != 9 {
-			t.Errorf("want 9 users got %d", n1)
+		if n1 != 7 {
+			t.Errorf("want 7 new users got %d", n1)
 			return
-		}
-
-		// sql2 filters out users whose valid flag is not set - e3.
-		const sqlTemplate2 = `
-			SELECT u.usr_id, u.usr_login_name, %s(firstName.usd_value, ''), %s(lastName.usd_value, '')
-			FROM adm_users as u
-			LEFT JOIN adm_user_fields as fieldFirstName
-				 ON fieldFirstName.usf_name_intern = 'FIRST_NAME'
-			LEFT JOIN adm_user_data as firstName
-				 ON firstName.usd_usr_id = u.usr_id
-				AND fieldFirstName.usf_id = firstName.usd_usf_id
-			LEFT JOIN adm_user_fields as fieldLastName
-				 ON fieldLastName.usf_name_intern = 'LAST_NAME'
-			LEFT JOIN adm_user_data as lastName
-				 ON lastName.usd_usr_id = u.usr_id
-				AND fieldLastName.usf_id = lastName.usd_usf_id
-			where u.usr_valid = 't';
-		`
-
-		var sql2 string
-		switch db.Config.Type {
-		case "postgres":
-			sql2 = fmt.Sprintf(sqlTemplate2, "COALESCE", "COALESCE")
-		default:
-			sql2 = fmt.Sprintf(sqlTemplate2, "IFNULL", "IFNULL")
 		}
 
 		rows2, selectError2 := db.Query(sql2)
@@ -388,48 +541,29 @@ func TestAdmidioEmailFilter(t *testing.T) {
 				t.Error(ue)
 				return
 			}
+
+			if u.LoginName == un1 ||
+				u.LoginName == un2 ||
+				u.LoginName == un3 ||
+				u.LoginName == un4 ||
+				u.LoginName == un5 ||
+				u.LoginName == un6 ||
+				u.LoginName == un7 {
+
+				n2++
+			}
+
 			if u.LoginName == un3 {
 				t.Error("invalid user filter failed")
 				return
 			}
-			n2++
 		}
 
 		rows2.Close()
 
-		if n2 != 8 {
-			t.Errorf("want 8 users got %d", n2)
+		if n2 != 6 {
+			t.Errorf("want 6 users got %d", n2)
 			return
-		}
-
-		// sql3 also filters out users who do have Member status - System and un4
-		const sqlTemplate3 = `
-			SELECT u.usr_id, u.usr_login_name, %s(firstName.usd_value, ''), %s(lastName.usd_value, '')
-			FROM adm_users as u
-			LEFT JOIN adm_user_fields as fieldFirstName
-				 ON fieldFirstName.usf_name_intern = 'FIRST_NAME'
-			LEFT JOIN adm_user_data as firstName
-				 ON firstName.usd_usr_id = u.usr_id
-				AND fieldFirstName.usf_id = firstName.usd_usf_id
-			LEFT JOIN adm_user_fields as fieldLastName
-				 ON fieldLastName.usf_name_intern = 'LAST_NAME'
-			LEFT JOIN adm_user_data as lastName
-				 ON lastName.usd_usr_id = u.usr_id
-				AND fieldLastName.usf_id = lastName.usd_usf_id
-			INNER JOIN adm_members as m
-					 ON u.usr_id = m.mem_usr_id
-			inner join adm_roles as r
-				 ON r.rol_id = m.mem_rol_id
-				AND r.rol_name = 'Member'
-			where u.usr_valid = 't';
-		`
-
-		var sql3 string
-		switch db.Config.Type {
-		case "postgres":
-			sql3 = fmt.Sprintf(sqlTemplate3, "COALESCE", "COALESCE")
-		default:
-			sql3 = fmt.Sprintf(sqlTemplate3, "IFNULL", "IFNULL")
 		}
 
 		rows3, selectError3 := db.Query(sql3)
@@ -437,7 +571,7 @@ func TestAdmidioEmailFilter(t *testing.T) {
 			t.Error(selectError3)
 		}
 
-		// Count the returned rows and watch the names - System and un4 should not appear.
+		// Count the returned rows and watch the names - un4 should not appear.
 		var n3 int
 		for {
 			if !rows3.Next() {
@@ -452,49 +586,29 @@ func TestAdmidioEmailFilter(t *testing.T) {
 				t.Error(ue)
 				return
 			}
-			if u.LoginName == "System" || u.LoginName == un4 {
+
+			if u.LoginName == un1 ||
+				u.LoginName == un2 ||
+				u.LoginName == un3 ||
+				u.LoginName == un4 ||
+				u.LoginName == un5 ||
+				u.LoginName == un6 ||
+				u.LoginName == un7 {
+
+				n3++
+			}
+
+			if u.LoginName == un4 {
 				t.Errorf("non member filter failed %s", u.LoginName)
 				return
 			}
-			n3++
 		}
 
 		rows3.Close()
 
-		if n3 != 6 {
-			t.Errorf("want 6 users got %d", n3)
+		if n3 != 5 {
+			t.Errorf("want 5 users got %d", n3-usersAtStart)
 			return
-		}
-
-		// sql4 also filters out users whose membership has lapsed.
-		const sqlTemplate4 = `
-			SELECT u.usr_id, u.usr_login_name, %s(firstName.usd_value, ''), %s(lastName.usd_value, '')
-			FROM adm_users as u
-			LEFT JOIN adm_user_fields as fieldFirstName
-				on fieldFirstName.usf_name_intern = 'FIRST_NAME'
-			LEFT JOIN adm_user_data as firstName
-				on firstName.usd_usr_id = u.usr_id
-				AND fieldFirstName.usf_id = firstName.usd_usf_id
-			LEFT JOIN adm_user_fields as fieldLastName
-				on fieldLastName.usf_name_intern = 'LAST_NAME'
-			LEFT JOIN adm_user_data as lastName
-				on lastName.usd_usr_id = u.usr_id
-				AND fieldLastName.usf_id = lastName.usd_usf_id
-			INNER JOIN adm_members as m
-				 ON u.usr_id = m.mem_usr_id
-			inner join adm_roles as r
-				 ON r.rol_id = m.mem_rol_id
-				AND r.rol_name = 'Member'
-			WHERE u.usr_valid = 't'
-			AND m.mem_end >= $1;
-		`
-
-		var sql4 string
-		switch db.Config.Type {
-		case "postgres":
-			sql4 = fmt.Sprintf(sqlTemplate4, "COALESCE", "COALESCE")
-		default:
-			sql4 = fmt.Sprintf(sqlTemplate4, "IFNULL", "IFNULL")
 		}
 
 		rows4, selectError4 := db.Query(sql4, membershipStart.Format("2006-01-02"))
@@ -516,56 +630,28 @@ func TestAdmidioEmailFilter(t *testing.T) {
 			if ue != nil {
 				t.Error(ue)
 			}
+
+			if u.LoginName == un1 ||
+				u.LoginName == un2 ||
+				u.LoginName == un3 ||
+				u.LoginName == un4 ||
+				u.LoginName == un5 ||
+				u.LoginName == un6 ||
+				u.LoginName == un7 {
+
+				n4++
+			}
+
 			if u.LoginName == un5 {
 				t.Errorf("lapsed member filter failed %s", u.LoginName)
 			}
-			n4++
 		}
 
 		rows4.Close()
 
-		if n4 != 5 {
-			t.Errorf("want 5 users got %d", n4)
+		if n4 != 4 {
+			t.Errorf("want 4 users got %d", n4)
 			return
-		}
-
-		// sql5 also filters out people who have an email entry in adm_user_data but it's empty.
-		const sqlTemplate5 = `
-			SELECT u.usr_id, u.usr_login_name, %s(firstName.usd_value, ''), %s(lastName.usd_value, ''),
-			%s(email.usd_value, '')
-			FROM adm_users as u
-			LEFT JOIN adm_user_fields as fieldFirstName
-				 ON fieldFirstName.usf_name_intern = 'FIRST_NAME'
-			LEFT JOIN adm_user_data as firstName
-				 ON firstName.usd_usr_id = u.usr_id
-				AND fieldFirstName.usf_id = firstName.usd_usf_id
-			LEFT JOIN adm_user_fields as fieldLastName
-				 ON fieldLastName.usf_name_intern = 'LAST_NAME'
-			LEFT JOIN adm_user_data as lastName
-				 ON lastName.usd_usr_id = u.usr_id
-				AND fieldLastName.usf_id = lastName.usd_usf_id
-			INNER JOIN adm_members as m
-				 ON u.usr_id = m.mem_usr_id
-			inner join adm_roles as r
-				  ON r.rol_id = m.mem_rol_id
-				AND r.rol_name = 'Member'
-			LEFT JOIN adm_user_fields as fieldEmail
-				ON fieldEmail.usf_name_intern = 'EMAIL'
-				AND fieldEmail.usf_type = 'EMAIL'
-			INNER JOIN adm_user_data as email
-				 ON email.usd_usr_id = u.usr_id
-				AND fieldEmail.usf_id = email.usd_usf_id
-				AND length(email.usd_value) > 0
-			WHERE u.usr_valid = 't'
-				AND m.mem_end >= $1;
-		`
-
-		var sql5 string
-		switch db.Config.Type {
-		case "postgres":
-			sql5 = fmt.Sprintf(sqlTemplate5, "COALESCE", "COALESCE", "COALESCE")
-		default:
-			sql5 = fmt.Sprintf(sqlTemplate5, "IFNULL", "IFNULL", "IFNULL")
 		}
 
 		rows5, selectError5 := db.Query(sql5, membershipStart.Format("2006-01-02"))
@@ -574,7 +660,8 @@ func TestAdmidioEmailFilter(t *testing.T) {
 			return
 		}
 
-		// Count the returned rows and watch the names - un6 and firstname.lastname should not appear.
+		// Count the returned rows and watch the names - un3, un4, un5, un6 and
+		// firstname.lastname should not appear.
 		var n5 int
 		for {
 			if !rows5.Next() {
@@ -588,10 +675,21 @@ func TestAdmidioEmailFilter(t *testing.T) {
 			if ue != nil {
 				t.Error(ue)
 			}
+
+			if u.LoginName == un1 ||
+				u.LoginName == un2 ||
+				u.LoginName == un3 ||
+				u.LoginName == un4 ||
+				u.LoginName == un5 ||
+				u.LoginName == un6 ||
+				u.LoginName == un7 {
+
+				n5++
+			}
+
 			if u.LoginName == un6 || u.LoginName == firstname+"."+lastname {
 				t.Errorf("empty email filter failed %s", u.LoginName)
 			}
-			n5++
 		}
 
 		rows5.Close()
@@ -599,53 +697,6 @@ func TestAdmidioEmailFilter(t *testing.T) {
 		if n5 != 3 {
 			t.Errorf("want 3 users got %d", n5)
 			return
-		}
-
-		// sql6 also filters out people who have no email entry in adm_user_data.
-		// This is the query used in the Admidio system, except for the last line,
-		// where m.mem_end is compared with CURRENT_DATE.
-		const sqlTemplate6 = `
-			SELECT u.usr_id, u.usr_login_name, %s(firstName.usd_value, ''), %s(lastName.usd_value, ''),
-			%s(email.usd_value, '')
-			FROM adm_users as u
-			LEFT JOIN adm_user_fields as fieldFirstName
-				 ON fieldFirstName.usf_name_intern = 'FIRST_NAME'
-			LEFT JOIN adm_user_data as firstName
-				 ON firstName.usd_usr_id = u.usr_id
-				AND fieldFirstName.usf_id = firstName.usd_usf_id
-			LEFT JOIN adm_user_fields as fieldLastName
-				 ON fieldLastName.usf_name_intern = 'LAST_NAME'
-			LEFT JOIN adm_user_data as lastName
-				 ON lastName.usd_usr_id = u.usr_id
-				AND fieldLastName.usf_id = lastName.usd_usf_id
-			INNER JOIN adm_members as m
-				 ON u.usr_id = m.mem_usr_id
-			inner join adm_roles as r
-				 ON r.rol_id = m.mem_rol_id
-				AND r.rol_name = 'Member'
-			LEFT JOIN adm_user_fields as fieldEmail
-				ON fieldEmail.usf_name_intern = 'EMAIL'
-				AND fieldEmail.usf_type = 'EMAIL'
-			INNER JOIN adm_user_data as email
-				 ON email.usd_usr_id = u.usr_id
-				AND fieldEmail.usf_id = email.usd_usf_id
-				AND length(email.usd_value) > 0
-			LEFT JOIN adm_user_fields  as fieldPerm
-				ON fieldPerm.usf_name_intern = '` + database.EmailPermNameIntern + `'
-			INNER join adm_user_data as perm
-				ON perm.usd_usr_id = u.usr_id
-				AND perm.usd_usf_id = fieldPerm.usf_id
-				AND perm.usd_value = '1'
-			WHERE u.usr_valid = 't' 
-			AND m.mem_end >= $1;
-		`
-
-		var sql6 string
-		switch db.Config.Type {
-		case "postgres":
-			sql6 = fmt.Sprintf(sqlTemplate6, "COALESCE", "COALESCE", "COALESCE")
-		default:
-			sql6 = fmt.Sprintf(sqlTemplate6, "IFNULL", "IFNULL", "IFNULL")
 		}
 
 		rows6, selectError6 := db.Query(sql6, membershipStart.Format("2006-01-02"))
@@ -669,24 +720,53 @@ func TestAdmidioEmailFilter(t *testing.T) {
 				t.Error(ue)
 			}
 
-			if u.LoginName == un7 {
-				t.Errorf("no permission filter failed %s", u.LoginName)
+			if u.LoginName == un1 ||
+				u.LoginName == un2 ||
+				u.LoginName == un3 ||
+				u.LoginName == un4 ||
+				u.LoginName == un5 ||
+				u.LoginName == un6 ||
+				u.LoginName == un7 {
+
+				if u.LoginName == un7 {
+					t.Errorf("no permission filter failed %s", u.LoginName)
+					continue
+				}
+				n6++
 			}
-			n6++
 		}
 
 		rows6.Close()
 
 		if n6 != 2 {
-			t.Errorf("want 2 users got %d", n6)
-			return
+			t.Errorf("want 2 user got %d", n6)
+			continue
 		}
 	}
 }
 
 func TestImport(t *testing.T) {
 
-	records, err := Import("./members.test.csv", 2025)
+	fileContents := []byte(`"Email","Title","Initials","First Name","Middle Name","Surname","Position","Organisation","Address Line 1","Address Line 2","Address Line 3","Town","County Name","Postcode","Phone","Mobile","Matching SIHG Llist Email?"
+"A@gmail.com","Mr","A","Alan","Alfred","Smith","","","1 The High Street","","","FARNHAM","Surrey","GU9 0RZ","07123456789","",""
+"B@OUTLOOK.COM","Dr","R","Roger","","Jones","","","Flat 1","Bookham Towers","The High Street","BOOKHAM","Surrey","KT23 3QF","01234 567890","07748 111111",""
+"c@outlook.com","Dr","R J","Roger J","","Jones","","","Flat 1","Bookham Towers","The High Street","BOOKHAM","Surrey","KT23 3QF","01234 567890","07748 111111",""
+"","Mr","","Dennis","","Finch Hatton","","","Flat 1","Bookham Towers","The High Street","BOOKHAM","Surrey","KT23 3QF","01234 567890","07748 111111",""
+"","Mr","","Dennis","","","","","Flat 1","Bookham Towers","The High Street","BOOKHAM","Surrey","KT23 3QF","01234 567890","07748 111111",""
+"","Mr","","","","Hatton","","","Flat 1","Bookham Towers","The High Street","BOOKHAM","Surrey","KT23 3QF","01234 567890","07748 111111",""`)
+
+	fsys := fstest.MapFS{
+		"members.csv": {
+			Data: fileContents,
+		},
+	}
+
+	file, e := fsys.Open("members.csv")
+	if e != nil {
+		t.Fatal(e)
+	}
+
+	records, err := Import(file, 2025)
 	if err != nil {
 		m := err.Error()
 		t.Error(m)
@@ -747,7 +827,21 @@ func TestImport(t *testing.T) {
 // TestImportEmailOnly tests an import of a file containing only email addresses.
 func TestImportEmailOnly(t *testing.T) {
 
-	records, err := Import("./members.email.only.csv", 2025)
+	fileContents := []byte(`"Email"
+"c@example.com"`)
+
+	fsys := fstest.MapFS{
+		"members.email.only.csv": {
+			Data: fileContents,
+		},
+	}
+
+	file, e := fsys.Open("members.email.only.csv")
+	if e != nil {
+		t.Fatal(e)
+	}
+
+	records, err := Import(file, 2025)
 	if err != nil {
 		m := err.Error()
 		t.Error(m)
@@ -773,7 +867,21 @@ func TestImportEmailOnly(t *testing.T) {
 // TestImportJustEmail tests an import of a file containing only emails.
 func TestImportJustEmail(t *testing.T) {
 
-	records, err := Import("./members.email.only.csv", 2025)
+	fileContents := []byte(`"Email"
+"c@example.com"`)
+
+	fsys := fstest.MapFS{
+		"members.email.only.csv": {
+			Data: fileContents,
+		},
+	}
+
+	file, e := fsys.Open("members.email.only.csv")
+	if e != nil {
+		t.Fatal(e)
+	}
+
+	records, err := Import(file, 2025)
 	if err != nil {
 		m := err.Error()
 		t.Error(m)
@@ -809,25 +917,29 @@ func TestImportToDatabase(t *testing.T) {
 	membershipStart := time.Date(2025, time.April, 1, 0, 0, 0, 0, ukTime)
 
 	for _, dbType := range databaseList {
-		db, connError := database.OpenDBForTesting(dbType)
+		db, connError := database.ConnectForTesting(dbType)
 
 		if connError != nil {
 			t.Error(connError)
 			continue
 		}
 
-		db.BeginTx()
-
 		defer db.Rollback()
 		defer db.CloseAndDelete()
 
-		prepError := database.PrepareTestTables(db)
-		if prepError != nil {
-			t.Error(prepError)
+		// There will be all sorts of users and members in the Postgres database,
+		// just the  system user in SQLite.  See how many we already have.  We will
+		// check later how  many extra are created.
+		initialUsers, ue := db.GetUsers()
+		if ue != nil {
+			t.Error(ue)
+			continue
 		}
 
-		if dbType == "sqlite" {
-			log.Printf("%s\\%s", db.SQLiteTempDir+"\\sqlite.db", db.Config.Name)
+		initialMembers, me := db.GetMembers()
+		if me != nil {
+			t.Error(me)
+			continue
 		}
 
 		email1, e1 := database.CreateUuid(db.Transaction, "usr_login_name", "adm_users")
@@ -923,6 +1035,7 @@ func TestImportToDatabase(t *testing.T) {
 			}
 		}
 
+		// Find out how many users we now have.
 		users, getUsersError := db.GetUsers()
 
 		if getUsersError != nil {
@@ -930,30 +1043,38 @@ func TestImportToDatabase(t *testing.T) {
 			continue
 		}
 
-		// There is already the system user and we created three more.
-		if len(users) < 4 {
-			t.Errorf("want 4 users got %d", len(users))
+		// We should have created three more users and members.
+		numNewUsers := len(users) - len(initialUsers)
+		if numNewUsers != 3 {
+			t.Errorf("want 3 new users got %d", numNewUsers)
 			continue
 		}
 
-		if len(users) > 4 {
-			t.Errorf("want 4 users got too many - %d", len(users))
-			continue
-		}
-
-		// The system user doesn't need a member so there are only three memers.
 		members, getMembersError := db.GetMembers()
 		if getMembersError != nil {
 			t.Error(getMembersError)
 			continue
 		}
 
-		if len(members) != 3 {
-			t.Errorf("want 3 members got %d", len(members))
+		newMembers := len(members) - len(initialMembers)
+		if newMembers != 3 {
+			t.Errorf("want 3 new members got %d", newMembers)
 			continue
 		}
 
-		for _, member := range members {
+		for i, record := range wantLine {
+			user, ue := db.GetUserByLoginName(record.UserName)
+			if ue != nil {
+				t.Error(ue)
+				break
+			}
+
+			member, merr := db.GetMemberOfUser(user)
+			if merr != nil {
+				t.Error(merr)
+				break
+			}
+
 			// Date fields in sqlite are like "2025-04-01", in Postgres "2025-04-01T00:00:00Z".
 			ms := "2025-04-01"
 			if dbType == "postgres" {
@@ -970,9 +1091,6 @@ func TestImportToDatabase(t *testing.T) {
 			if member.EndDate != me {
 				t.Errorf("member %d want end %s got %s", member.ID, me, member.EndDate)
 			}
-		}
-
-		for i := range wantLine {
 
 			// Get the users with the given email address - should be exactly one.
 			users, getUserError := db.GetUsersByLoginName(wantLine[i].UserName)
@@ -981,24 +1099,17 @@ func TestImportToDatabase(t *testing.T) {
 				continue
 			}
 
-			if len(users) < 1 {
-				t.Error("got no users")
-				continue
-			}
-
-			if len(users) > 1 {
+			if len(users) != 1 {
 				t.Errorf("want 1 user got %d", len(users))
 				continue
 			}
 
-			fetchedUser := users[0]
-
-			if fetchedUser.LoginName != wantLine[i].UserName {
-				t.Errorf("want login name %s got %s", wantLine[i].UserName, fetchedUser.LoginName)
+			if users[0].LoginName != wantLine[i].UserName {
+				t.Errorf("want login name %s got %s", wantLine[i].UserName, users[0].LoginName)
 				continue
 			}
 
-			if fetchedUser.ID != members[i].UserID {
+			if users[0].ID != member.UserID {
 				t.Errorf("want %d got %d", users[i].ID, members[i].UserID)
 				continue
 			}
@@ -1012,7 +1123,7 @@ func TestImportToDatabase(t *testing.T) {
 					continue
 				}
 
-				email, emailError := database.GetUserDataField[string](db, emID, fetchedUser.ID)
+				email, emailError := database.GetUserDataField[string](db, emID, users[0].ID)
 				if emailError != nil {
 					t.Error(emailError)
 					continue
@@ -1024,14 +1135,13 @@ func TestImportToDatabase(t *testing.T) {
 				}
 			} else {
 				// Expect no rows in the results.
-				emID, emError :=
-					db.GetUserDataFieldIDByNameIntern("EMAIL")
+				emID, emError := db.GetUserDataFieldIDByNameIntern("EMAIL")
 				if emError != nil {
 					t.Error(emError)
 					continue
 				}
 
-				_, emailError := database.GetUserDataField[string](db, emID, fetchedUser.ID)
+				_, emailError := database.GetUserDataFieldErrorOnNotFound[string](db, emID, users[0].ID)
 
 				if !strings.Contains(emailError.Error(), "no rows") {
 					t.Errorf("%s: %s expected a 'no rows'  error", dbType, wantLine[i].Email)
@@ -1039,8 +1149,14 @@ func TestImportToDatabase(t *testing.T) {
 				}
 			}
 
+			salID, se := db.GetUserDataFieldIDByNameIntern("SALUTATION")
+			if se != nil {
+				t.Error(se)
+				continue
+			}
+
 			title, titleError :=
-				database.GetUserDataField[string](db, db.UserField["SALUTATION"].ID, fetchedUser.ID)
+				database.GetUserDataField[string](db, salID, users[0].ID)
 			if titleError != nil {
 				t.Error(titleError)
 				continue
@@ -1057,7 +1173,7 @@ func TestImportToDatabase(t *testing.T) {
 				continue
 			}
 
-			val, fnError := database.GetUserDataField[string](db, ifn, fetchedUser.ID)
+			val, fnError := database.GetUserDataField[string](db, ifn, users[0].ID)
 			if fnError != nil {
 				t.Error(fnError)
 				continue
@@ -1073,7 +1189,7 @@ func TestImportToDatabase(t *testing.T) {
 				continue
 			}
 
-			val, lnError := database.GetUserDataField[string](db, iln, fetchedUser.ID)
+			val, lnError := database.GetUserDataField[string](db, iln, users[0].ID)
 			if lnError != nil {
 				t.Error(lnError)
 				continue
@@ -1083,8 +1199,14 @@ func TestImportToDatabase(t *testing.T) {
 				continue
 			}
 
+			a1ID, a1e := db.GetUserDataFieldIDByNameIntern("STREET")
+			if a1e != nil {
+				t.Error(a1e)
+				continue
+			}
+
 			street, sError :=
-				database.GetUserDataField[string](db, db.UserField["STREET"].ID, fetchedUser.ID)
+				database.GetUserDataField[string](db, a1ID, users[0].ID)
 			if sError != nil {
 				t.Error(sError)
 				continue
@@ -1095,10 +1217,16 @@ func TestImportToDatabase(t *testing.T) {
 				continue
 			}
 
-			al2, al2Error :=
-				database.GetUserDataField[string](db, db.UserField["ADDRESS_LINE_2"].ID, fetchedUser.ID)
-			if al2Error != nil {
-				t.Error(al2Error)
+			a2ID, a2e := db.GetUserDataFieldIDByNameIntern("ADDRESS_LINE_2")
+			if a2e != nil {
+				t.Error(a2e)
+				continue
+			}
+
+			al2, a2Error :=
+				database.GetUserDataField[string](db, a2ID, users[0].ID)
+			if a2Error != nil {
+				t.Error(a2Error)
 				continue
 			}
 
@@ -1107,8 +1235,14 @@ func TestImportToDatabase(t *testing.T) {
 				continue
 			}
 
+			a3ID, a3e := db.GetUserDataFieldIDByNameIntern("ADDRESS_LINE_3")
+			if a3e != nil {
+				t.Error(a3e)
+				continue
+			}
+
 			al3, al3Error :=
-				database.GetUserDataField[string](db, db.UserField["ADDRESS_LINE_3"].ID, fetchedUser.ID)
+				database.GetUserDataField[string](db, a3ID, users[0].ID)
 			if al3Error != nil {
 				t.Error(al3Error)
 				continue
@@ -1119,8 +1253,14 @@ func TestImportToDatabase(t *testing.T) {
 				continue
 			}
 
+			cityID, citye := db.GetUserDataFieldIDByNameIntern("CITY")
+			if citye != nil {
+				t.Error(citye)
+				continue
+			}
+
 			city, cError :=
-				database.GetUserDataField[string](db, db.UserField["CITY"].ID, fetchedUser.ID)
+				database.GetUserDataField[string](db, cityID, users[0].ID)
 			if cError != nil {
 				t.Error(cError)
 				continue
@@ -1131,8 +1271,14 @@ func TestImportToDatabase(t *testing.T) {
 				continue
 			}
 
+			cID, ce := db.GetUserDataFieldIDByNameIntern("COUNTY")
+			if ce != nil {
+				t.Error(ce)
+				continue
+			}
+
 			county, cError :=
-				database.GetUserDataField[string](db, db.UserField["COUNTY"].ID, fetchedUser.ID)
+				database.GetUserDataField[string](db, cID, users[0].ID)
 			if cError != nil {
 				t.Error(cError)
 				continue
@@ -1143,8 +1289,14 @@ func TestImportToDatabase(t *testing.T) {
 				continue
 			}
 
+			pcID, pce := db.GetUserDataFieldIDByNameIntern("POSTCODE")
+			if pce != nil {
+				t.Error(pce)
+				continue
+			}
+
 			postcode, pcError :=
-				database.GetUserDataField[string](db, db.UserField["POSTCODE"].ID, fetchedUser.ID)
+				database.GetUserDataField[string](db, pcID, users[0].ID)
 			if pcError != nil {
 				t.Error(pcError)
 				continue
@@ -1155,8 +1307,14 @@ func TestImportToDatabase(t *testing.T) {
 				continue
 			}
 
+			ctID, cte := db.GetUserDataFieldIDByNameIntern("COUNTRY")
+			if cte != nil {
+				t.Error(cte)
+				continue
+			}
+
 			country, ctrError :=
-				database.GetUserDataField[string](db, db.UserField["COUNTRY"].ID, fetchedUser.ID)
+				database.GetUserDataField[string](db, ctID, users[0].ID)
 			if ctrError != nil {
 				t.Error(ctrError)
 				continue
@@ -1167,8 +1325,14 @@ func TestImportToDatabase(t *testing.T) {
 				continue
 			}
 
+			phID, phe := db.GetUserDataFieldIDByNameIntern("PHONE")
+			if phe != nil {
+				t.Error(phe)
+				continue
+			}
+
 			phone, pError :=
-				database.GetUserDataField[string](db, db.UserField["PHONE"].ID, fetchedUser.ID)
+				database.GetUserDataField[string](db, phID, users[0].ID)
 			if pError != nil {
 				t.Error(pError)
 				continue
@@ -1179,8 +1343,14 @@ func TestImportToDatabase(t *testing.T) {
 				continue
 			}
 
+			mobID, getMerr := db.GetUserDataFieldIDByNameIntern("MOBILE")
+			if getMerr != nil {
+				t.Error(getMerr)
+				continue
+			}
+
 			mobile, mError :=
-				database.GetUserDataField[string](db, db.UserField["MOBILE"].ID, fetchedUser.ID)
+				database.GetUserDataField[string](db, mobID, users[0].ID)
 			if mError != nil {
 				t.Error(mError)
 				continue

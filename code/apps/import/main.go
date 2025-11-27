@@ -30,7 +30,17 @@ func main() {
 		return
 	}
 
-	records, importError := csvimport.Import(os.Args[1], yearMembershipEnds)
+	// Open the file.
+	file, openError := os.Open(os.Args[1])
+
+	// Checks for the error
+	if openError != nil {
+		m := "Error while reading " + os.Args[1] + "\n"
+		log.Fatal(m, openError)
+		os.Exit(-1)
+	}
+
+	records, importError := csvimport.Import(file, yearMembershipEnds)
 
 	if importError != nil {
 		slog.Error(importError.Error())
