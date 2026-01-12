@@ -12,6 +12,10 @@ import (
 	"github.com/goblimey/go-tools/testsupport"
 )
 
+const TestInterests1 = "abcd"
+const TestInterests2 = "efgh"
+const TestInterests3 = "ijkl"
+
 var DBConfigForTestingWithPostgres DBConfig
 var DBConfigForTestingWithSQLite DBConfig
 var ourOrganisation *Organisation
@@ -102,12 +106,29 @@ func (db *Database) CloseAndDelete() error {
 	}
 }
 
+func ConnectForTesting(dbType string) (*Database, error) {
+
+	db, connError := OpenDBForTesting(dbType)
+
+	if connError != nil {
+		return nil, connError
+	}
+
+	db.BeginTx()
+
+	prepError := PrepareTestTables(db)
+	if prepError != nil {
+		return nil, prepError
+	}
+
+	return db, nil
+}
+
 func OpenDBForTesting(dbType string) (*Database, error) {
 
 	var db *Database
 	if dbType == "sqlite" {
 		db = New(&DBConfigForTestingWithSQLite)
-		db.UserField = make(map[string]*FieldData)
 		db.Config.Logger = createLoggerForTesting()
 		connError := db.ConnectForTestingWithSQLite()
 		if connError != nil {
@@ -115,7 +136,6 @@ func OpenDBForTesting(dbType string) (*Database, error) {
 		}
 	} else {
 		db = New(&DBConfigForTestingWithPostgres)
-		db.UserField = make(map[string]*FieldData)
 		db.Config.Logger = createLoggerForTesting()
 		connError := db.Connect()
 		if connError != nil {
@@ -186,22 +206,22 @@ func CreateTablesForTesting(db *Database) error {
 		}
 
 		const createCatSQL = `
-	CREATE TABLE IF NOT EXISTS adm_categories (
-		cat_id integer PRIMARY KEY NOT NULL,
-		cat_org_id integer,
-		cat_uuid character varying(36) NOT NULL,
-		cat_type character varying(10) NOT NULL,
-		cat_name_intern character varying(110) NOT NULL,
-		cat_name character varying(100) NOT NULL,
-		cat_system boolean DEFAULT false NOT NULL,
-		cat_default boolean DEFAULT false NOT NULL,
-		cat_sequence smallint NOT NULL,
-		cat_usr_id_create integer,
-		cat_timestamp_create timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-		cat_usr_id_change integer,
-		cat_timestamp_change timestamp without time zone
-	);
-`
+			CREATE TABLE IF NOT EXISTS adm_categories (
+				cat_id integer PRIMARY KEY NOT NULL,
+				cat_org_id integer,
+				cat_uuid character varying(36) NOT NULL,
+				cat_type character varying(10) NOT NULL,
+				cat_name_intern character varying(110) NOT NULL,
+				cat_name character varying(100) NOT NULL,
+				cat_system boolean DEFAULT false NOT NULL,
+				cat_default boolean DEFAULT false NOT NULL,
+				cat_sequence smallint NOT NULL,
+				cat_usr_id_create integer,
+				cat_timestamp_create timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+				cat_usr_id_change integer,
+				cat_timestamp_change timestamp without time zone
+			);
+		`
 
 		catError := createTableForTesting(db, createCatSQL)
 		if catError != nil {
@@ -226,23 +246,23 @@ func CreateTablesForTesting(db *Database) error {
 		}
 
 		const createMembersTableSQL = `
-		CREATE TABLE IF NOT EXISTS adm_members (
-			mem_id INTEGER PRIMARY KEY,
-			mem_rol_id integer NOT NULL,
-			mem_usr_id integer NOT NULL,
-			mem_uuid character varying(36) NOT NULL,
-			mem_begin varchar(30) NOT NULL,
-			mem_end varchar(30) NOT NULL,
-			mem_leader boolean DEFAULT false NOT NULL,
-			mem_usr_id_create integer,
-			mem_timestamp_create varchar(30) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			mem_usr_id_change integer,
-			mem_timestamp_change varchar(30),
-			mem_approved integer,
-			mem_comment character varying(4000),
-			mem_count_guests integer DEFAULT 0 NOT NULL
-		);
-	`
+			CREATE TABLE IF NOT EXISTS adm_members (
+				mem_id INTEGER PRIMARY KEY,
+				mem_rol_id integer NOT NULL,
+				mem_usr_id integer NOT NULL,
+				mem_uuid character varying(36) NOT NULL,
+				mem_begin varchar(30) NOT NULL,
+				mem_end varchar(30) NOT NULL,
+				mem_leader boolean DEFAULT false NOT NULL,
+				mem_usr_id_create integer,
+				mem_timestamp_create varchar(30) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				mem_usr_id_change integer,
+				mem_timestamp_change varchar(30),
+				mem_approved integer,
+				mem_comment character varying(4000),
+				mem_count_guests integer DEFAULT 0 NOT NULL
+			);
+		`
 
 		createMembersError := createTableForTesting(db, createMembersTableSQL)
 		if createMembersError != nil {
@@ -250,17 +270,17 @@ func CreateTablesForTesting(db *Database) error {
 		}
 
 		const createUserFieldsTableSQL = `
-		CREATE TABLE IF NOT EXISTS adm_user_fields (
-			usf_id integer PRIMARY KEY,
-			usf_uuid character varying(36) NOT NULL,
-			usf_type character varying(30) NOT NULL,
-			usf_cat_id integer NOT NULL,
-			usf_name_intern character varying(110) NOT NULL,
-			usf_name character varying(100) NOT NULL,
-			usf_sequence smallint NOT NULL,
-			usf_usr_id_create integer
-		);
-	`
+			CREATE TABLE IF NOT EXISTS adm_user_fields (
+				usf_id integer PRIMARY KEY,
+				usf_uuid character varying(36) NOT NULL,
+				usf_type character varying(30) NOT NULL,
+				usf_cat_id integer NOT NULL,
+				usf_name_intern character varying(110) NOT NULL,
+				usf_name character varying(100) NOT NULL,
+				usf_sequence smallint NOT NULL,
+				usf_usr_id_create integer
+			);
+		`
 
 		createFieldsError := createTableForTesting(db, createUserFieldsTableSQL)
 		if createFieldsError != nil {
@@ -269,53 +289,107 @@ func CreateTablesForTesting(db *Database) error {
 
 		const createUserDataTableSQL = `
 		CREATE TABLE IF NOT EXISTS adm_user_data (
-		usd_id INTEGER PRIMARY KEY,
-		usd_usr_id     integer NOT NULL,
-		usd_usf_id     integer NOT NULL,
-		usd_value      varchar(30) NOT NULL		
-		);
-	`
+			usd_id INTEGER PRIMARY KEY,
+			usd_usr_id     integer NOT NULL,
+			usd_usf_id     integer NOT NULL,
+			usd_value      varchar(30) NOT NULL		
+			);
+		`
 
 		createUserDataError := createTableForTesting(db, createUserDataTableSQL)
 		if createUserDataError != nil {
 			return createUserDataError
 		}
 
+		const createInterestsTableSQL = `
+			CREATE TABLE adm_interests (
+			ntrst_id INTEGER PRIMARY KEY NOT NULL,
+			ntrst_name character varying(50)
+		)
+		`
+
+		createInterestsError := createTableForTesting(db, createInterestsTableSQL)
+		if createInterestsError != nil {
+			return createInterestsError
+		}
+
+		const createMembersInterestsTableSQL = `
+			CREATE TABLE adm_members_interests (
+				mi_id INTEGER PRIMARY KEY NOT NULL,
+				mi_usr_id INTEGER NOT NULL,
+				mi_interest_id INTEGER NOT NULL,
+				CONSTRAINT adm_interests_un_usr_interest UNIQUE (mi_usr_id, mi_interest_id)
+			);
+		`
+
+		createMembersInterestsError := createTableForTesting(db, createMembersInterestsTableSQL)
+		if createMembersInterestsError != nil {
+			return createMembersInterestsError
+		}
+
+		const createMembersOtherInterestsTableSQL = `
+		CREATE TABLE adm_members_other_interests (
+			moi_id INTEGER PRIMARY KEY NOT NULL,
+			moi_usr_id INTEGER NOT NULL,
+			moi_interests character varying(200)
+		);
+	`
+
+		createMembersOtherInterestsError := createTableForTesting(db, createMembersOtherInterestsTableSQL)
+		if createMembersOtherInterestsError != nil {
+			return createMembersOtherInterestsError
+		}
+
 		const createMembershipSalesSQL = `
-	CREATE TABLE IF NOT EXISTS membership_sales (
-		ms_id INTEGER PRIMARY KEY,
-		ms_payment_service CHARACTER VARYING(36) NOT NULL,
-		ms_payment_status CHARACTER VARYING(20) NOT NULL,
-		ms_payment_id CHARACTER VARYING(200),
-		ms_transaction_type varchar(30) NOT NULL DEFAULT 'membership renewal',
-		ms_membership_year integer NOT NULL,
-		ms_usr1_id integer DEFAULT NULL,
-		ms_usr1_fee REAL NOT NULL,
-		ms_usr1_friend boolean NOT NULL DEFAULT false,
-		-- 0.0 if not a friend.
-		ms_usr1_friend_fee REAL NOT NULL default 0.0,
-		ms_usr1_first_name varchar (50),
-		ms_usr1_last_name varchar (50),
-		ms_usr1_email varchar (50),
-		-- 0 if no associate
-		ms_usr2_id integer DEFAULT NULL,
-		-- 0.0 if no associate
-		ms_usr2_fee REAL NOT NULL default 0.0,
-		-- false if no associate.
-		ms_usr2_friend boolean NOT NULL DEFAULT false,
-		-- 0.0 if no associate.
-		ms_usr2_friend_fee REAL NOT NULL DEFAULT 0.0,
-		ms_usr2_first_name varchar (50),
-		ms_usr2_last_name varchar(50),
-		ms_usr2_email varchar (50),
-		-- 0.0 if no donation.
-		ms_donation REAL NOT NULL DEFAULT 0.0,
-		-- 0.0 if no donation to museum.
-		ms_donation_museum REAL NOT NULL DEFAULT 0.0,
-		ms_giftaid boolean NOT NULL DEFAULT false,
-		ms_timestamp_create varchar(30) NOT NULL DEFAULT CURRENT_TIMESTAMP
-	);
-`
+			CREATE TABLE IF NOT EXISTS membership_sales (
+				ms_id INTEGER PRIMARY KEY,
+				ms_payment_service CHARACTER VARYING(36) NOT NULL,
+				ms_payment_status CHARACTER VARYING(20) NOT NULL,
+				ms_payment_id CHARACTER VARYING(200),
+				ms_transaction_type varchar(30) NOT NULL DEFAULT 'membership renewal',
+				ms_membership_year integer NOT NULL,
+				ms_usr1_id integer DEFAULT NULL,
+				ms_usr1_fee REAL NOT NULL,
+				ms_usr1_friend boolean NOT NULL DEFAULT false,
+				-- 0.0 if not a friend.
+				ms_usr1_friend_fee REAL NOT NULL default 0.0,
+				ms_usr1_title VARCHAR(50),
+				ms_usr1_first_name varchar (30),
+				ms_usr1_last_name varchar (50),
+				ms_usr1_email varchar (50),
+				-- 0 if no associate
+				ms_usr2_id integer DEFAULT NULL,
+				-- 0.0 if no associate
+				ms_usr2_fee REAL NOT NULL default 0.0,
+				-- false if no associate.
+				ms_usr2_friend boolean NOT NULL DEFAULT false,
+				-- 0.0 if no associate.
+				ms_usr2_friend_fee REAL NOT NULL DEFAULT 0.0,
+				ms_usr2_title VARCHAR(30),
+				ms_usr2_first_name varchar (50),
+				ms_usr2_last_name varchar(50),
+				ms_usr2_email varchar (50),
+				-- 0.0 if no donation.
+				ms_donation REAL NOT NULL DEFAULT 0.0,
+				-- 0.0 if no donation to museum.
+				ms_donation_museum REAL NOT NULL DEFAULT 0.0,
+				ms_giftaid boolean NOT NULL DEFAULT false,
+				ms_timestamp_create varchar(30) NOT NULL DEFAULT CURRENT_TIMESTAMP
+			);
+		`
+
+		const createCountriesTableSQL = `
+			CREATE TABLE IF NOT EXISTS adm_countries (
+				ct_id INTEGER PRIMARY KEY NOT NULL,
+				ct_code CHARACTER VARYING(3) NOT NULL,
+				ct_name CHARACTER VARYING(50) NOT NULL
+			);
+		`
+
+		createCountriesError := createTableForTesting(db, createCountriesTableSQL)
+		if createCountriesError != nil {
+			return createCountriesError
+		}
 
 		membersCreateError := createTableForTesting(db, createMembershipSalesSQL)
 		if membersCreateError != nil {
@@ -326,11 +400,10 @@ func CreateTablesForTesting(db *Database) error {
 	return nil
 }
 
-// PopulateTestTables is a helper function that loads the reference
-// data into the tables.  The Postgres test database is fixed so the
-// data is only loaded once.  After that, the function just checks
-// that it's loaded.  If the database is SQLite, the data are created for
-// every test.
+// PopulateTestTables is a helper function that loads the reference data
+// into the tables.  It only does anything if the database is SQLite - the
+// data are created for every test.  The postgres test database is
+// permanent and created manually befor testing starts.
 func PopulateTestTables(db *Database) error {
 
 	// Ensure the system user is set up.
@@ -437,8 +510,7 @@ func PopulateTestTables(db *Database) error {
 
 	// UserFieldsForTesting is the list of adm_user_fields rows to be set up for testing.
 	var UserFieldsForTesting = []*FieldData{
-		{0, "", "Donation to the museum.", "VALUE_OF_DONATION_TO_THE_MUSEUM", "DECIMAL", 37, systemUser, catBasic},
-		{0, "", "SYS_EMAIL", "EMAIL", "EMAIL", 6, systemUser, catBasic},
+
 		{0, "", "Salutation", "SALUTATION", "TEXT", 2, systemUser, catBasic},
 		{0, "", "Initials", "INITIALS", "TEXT", 4, systemUser, catBasic},
 		{0, "", "SYS_FIRSTNAME", "FIRST_NAME", "TEXT", 3, systemUser, catBasic},
@@ -446,28 +518,29 @@ func PopulateTestTables(db *Database) error {
 		{0, "", "Address line 1", "STREET", "TEXT", 7, systemUser, catBasic},
 		{0, "", "Address line 2", "ADDRESS_LINE_2", "TEXT", 8, systemUser, catBasic},
 		{0, "", "address line 3", "ADDRESS_LINE_3", "TEXT", 9, systemUser, catBasic},
+		{0, "", "Town", "TOWN", "TEXT", 10, systemUser, catBasic},
 		{0, "", "County", "COUNTY", "TEXT", 11, systemUser, catBasic},
 		{0, "", "SYS_POSTCODE", "POSTCODE", "TEXT", 13, systemUser, catBasic},
-		{0, "", "SYS_COUNTRY", "COUNTRY", "TEXT", 12, systemUser, catBasic},
-		{0, "", "City", "CITY", "TEXT", 10, systemUser, catBasic},
-		{0, "", "SYS_PHONE", "PHONE", "PHONE", 15, systemUser, catBasic},
-		{0, "", "SYS_MOBILE", "MOBILE", "PHONE", 16, systemUser, catBasic},
-		{0, "", "gift aid", "GIFT_AID", "CHECKBOX", 30, systemUser, catBasic},
+		{0, "", "SYS_COUNTRY", "COUNTRY", "TEXT", 14, systemUser, catBasic},
+		{0, "", "City", "CITY", "TEXT", 15, systemUser, catBasic},
+		{0, "", "SYS_EMAIL", "EMAIL", "EMAIL", 16, systemUser, catBasic},
+		{0, "", "SYS_PHONE", "PHONE", "PHONE", 17, systemUser, catBasic},
+		{0, "", "SYS_MOBILE", "MOBILE", "PHONE", 18, systemUser, catBasic},
+		{0, "", "date last paid", "DATE_LAST_PAID", "DATE", 19, systemUser, catBasic},
 		{0, "", "Total value of last payment", "VALUE_OF_LAST_PAYMENT", "DECIMAL", 22, systemUser, catBasic},
 		{0, "", "Friend of the Museum", "FRIEND_OF_THE_MUSEUM", "CHECKBOX", 23, systemUser, catBasic},
-		{0, "", "date last paid", "DATE_LAST_PAID", "DATE", 19, systemUser, catBasic},
-		{0, "", "Notices by email", "NOTICES_BY_EMAIL", "CHECKBOX", 31, systemUser, catBasic},
-		{0, "", "Number of members of LDLHS at address", "MEMBERS_AT_ADDRESS", "NUMBER", 17, systemUser, catBasic},
-		{0, "", "Number of Friends of the Museum at this address", "NUMBER_OF_FRIENDS_OF_THE_MUSEUM_AT_THIS_ADDRESS", "NUMBER", 18, systemUser, catBasic},
+		{0, "", "Notices by email", "NOTICES_BY_EMAIL", "CHECKBOX", 24, systemUser, catBasic},
+		{0, "", "Number of members of LDLHS at address", "MEMBERS_AT_ADDRESS", "NUMBER", 25, systemUser, catBasic},
+		{0, "", "Number of Friends of the Museum at this address", "NUMBER_OF_FRIENDS_OF_THE_MUSEUM_AT_THIS_ADDRESS", "NUMBER", 26, systemUser, catBasic},
 		{0, "", "Notices by post", "NOTICES_BY_POST", "CHECKBOX", 32, systemUser, catBasic},
 		{0, "", "Newsletter by Email", "NEWSLETTER_BY_EMAIL", "CHECKBOX", 33, systemUser, catBasic},
-		{0, "", "Permission to send emails", EmailPermNameIntern, "CHECKBOX", 33, systemUser, catBasic},
-		{0, "", "donation to the society", "DONATION_TO_SOCIETY", "DECIMAL", 34, systemUser, catBasic},
+		{0, "", "Permission to send emails", EmailPermNameIntern, "CHECKBOX", 34, systemUser, catBasic},
 		{0, "", "donation to the society", "VALUE_OF_DONATION_TO_LDLHS", "DECIMAL", 35, systemUser, catBasic},
-		{0, "", "Donation to the museum.", "DONATION_TO_MUSEUM", "DECIMAL", 36, systemUser, catBasic},
-
+		{0, "", "Donation to the museum.", "VALUE_OF_DONATION_TO_THE_MUSEUM", "DECIMAL", 37, systemUser, catBasic},
+		{0, "", "gift aid", "GIFT_AID", "CHECKBOX", 37, systemUser, catBasic},
 		{0, "", "Total value of last payment", "VALUE_OF_LAST_PAYMENT", "DECIMAL", 38, systemUser, catBasic},
-		{0, "", "data protection permission", "DATA_PROTECTION_PERMISSION", "checkbox", 39, systemUser, catBasic},
+		{0, "", "Location of Interest", "LOCATION_OF_INTEREST", "text", 39, systemUser, catBasic},
+		{0, "", "data protection permission", "DATA_PROTECTION_PERMISSION", "checkbox", 40, systemUser, catBasic},
 	}
 
 	// Create the field names in adm_user_fields.  The names of the fields are given
@@ -492,15 +565,40 @@ func PopulateTestTables(db *Database) error {
 		}
 	}
 
-	// If the DB is postgres, all the records should be created just once
-	// and committed.  Tests in the future will find them set up already.
-	// If it's SQLite, the database is set up in a temporary directory.
-	// The data are set up at the start of each test and all changes rolled
-	// back at the end.  Then the temporary directory is removed.
+	const createInterestSQL = `insert into adm_interests (ntrst_name) values(?);`
 
-	if db.Config.Type == "postgres" {
-		db.Commit()
-		db.BeginTx() // The code that follows expects a transaction.
+	_, interestError1 := db.CreateRow(createInterestSQL, TestInterests1)
+	if interestError1 != nil {
+		return interestError1
+	}
+
+	_, interestError2 := db.CreateRow(createInterestSQL, TestInterests2)
+	if interestError2 != nil {
+		return interestError2
+	}
+
+	_, interestError3 := db.CreateRow(createInterestSQL, TestInterests3)
+	if interestError3 != nil {
+		return interestError3
+	}
+
+	const createCountrySQL = `insert into adm_countries(ct_code, ct_name) values(?, ?);`
+
+	// Create the countries in reverse alphabetical order by name, so that the test
+	// can check the ORDER BY.
+	_, ce1 := db.CreateRow(createCountrySQL, "ZWE", "Zimbabwe")
+	if ce1 != nil {
+		return ce1
+	}
+
+	_, ce2 := db.CreateRow(createCountrySQL, "GBR", "United Kingdom")
+	if ce2 != nil {
+		return ce2
+	}
+
+	_, ce3 := db.CreateRow(createCountrySQL, "ABW", "Aruba")
+	if ce3 != nil {
+		return ce3
 	}
 
 	return nil
@@ -508,22 +606,18 @@ func PopulateTestTables(db *Database) error {
 
 func PrepareTestTables(db *Database) error {
 	// This only creates tables when the DB is sqlite.  The postgress
-	// test database is set up permanently.  Some postgres objects need to be
-	// set up, but only once, the first time this function is run on an empty
-	// database.
+	// test database is set up permanently.
 
-	if db.Config.Type == "postgres" {
-		return nil
-	}
+	if db.Config.Type == "sqlite" {
+		e := CreateTablesForTesting(db)
+		if e != nil {
+			return e
+		}
 
-	e := CreateTablesForTesting(db)
-	if e != nil {
-		return e
-	}
-
-	e2 := PopulateTestTables(db)
-	if e2 != nil {
-		return e2
+		e2 := PopulateTestTables(db)
+		if e2 != nil {
+			return e2
+		}
 	}
 
 	return nil

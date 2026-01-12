@@ -14,6 +14,8 @@ func TestParseConfig(t *testing.T) {
 			"organisation_name": "some name",
 			"HTTP": true,
 			"run_user": "simon",
+			"logfile_group": "peter",
+			"logfile_permissions": "0777",
 			"stripe_secret_key": "foo",
 			"tls_certificate_file": "pem",
 			"tls_certificate_key_file": "key",
@@ -82,6 +84,14 @@ func TestParseConfig(t *testing.T) {
 
 	if conf.RunUser != "simon" {
 		t.Errorf("want simon, got %s", conf.RunUser)
+	}
+
+	if conf.LogfileGroup != "peter" {
+		t.Errorf("want peter, got %s", conf.LogfileGroup)
+	}
+
+	if conf.PermissionBits != 0777 {
+		t.Errorf("want 0777 got %O", conf.PermissionBits)
 	}
 
 	if conf.StripeSecretKey != "foo" {

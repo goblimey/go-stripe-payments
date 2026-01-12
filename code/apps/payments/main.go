@@ -33,23 +33,23 @@ package main
 import (
 	"crypto/tls"
 	"fmt"
-	"log"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/user"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/stripe/stripe-go/v81"
 
 	"github.com/goblimey/go-tools/dailylogger"
+	ps "github.com/goblimey/portablesyscall"
 
 	"github.com/goblimey/go-stripe-payments/code/apps/payments/handler"
 	"github.com/goblimey/go-stripe-payments/code/pkg/config"
 	"github.com/goblimey/go-stripe-payments/code/pkg/database"
 	"github.com/goblimey/go-stripe-payments/code/pkg/shutdown"
-	"github.com/goblimey/go-stripe-payments/code/pkg/usercontrol"
 )
 
 // The config.
@@ -78,29 +78,38 @@ func main() {
 	}
 
 	hdlr := handler.New(conf)
-	// http.Handle("/", http.FileServer(http.Dir("public")))
+
+	// Create the daily log file.  In production we are running as root.  We don't
+	// want to have be root to read the log, so set it owned as the target user.
+	hdlr.Logger = GetDailyLogger(conf.LogDir, conf.LogLeader)
+
 	http.HandleFunc("/", hdlr.Home)
 	http.HandleFunc("/index.html", hdlr.Home)
-	http.HandleFunc("/displayPaymentForm", hdlr.GetPaymentData)
+	http.HandleFunc("/subscribe", hdlr.GetPaymentData)
+	http.HandleFunc("/subscribe/", hdlr.GetPaymentData)
 	http.HandleFunc("/checkout", hdlr.Checkout)
 	http.HandleFunc("/success", hdlr.Success)
+	http.HandleFunc("/extradetails", hdlr.ExtraDetails)
+	http.HandleFunc("/completion", hdlr.Completion)
 	http.HandleFunc("/cancel", hdlr.Cancel)
 	http.HandleFunc("/create-checkout-session", hdlr.CreateCheckoutSession)
+	// Backward compatibility:
+	http.HandleFunc("/displayPaymentForm", hdlr.GetPaymentData)
+	http.HandleFunc("/displayPaymentForm/", hdlr.GetPaymentData)
 
 	// Run a test connection to the database.
 	db := database.New(&dbConfig)
 	connectError := db.Connect()
 	if connectError != nil {
-		fmt.Println(connectError.Error())
+		hdlr.Fatal(connectError)
 		return
 	}
 	db.Close()
 
-	if conf.HTTP {
-		// No TLS cert files are supplied so we offer an HTTP service.  There
-		// is no need to start off running as root and no need to shut down
-		// at midnight.
-		hdlr.Logger = GetDailyLogger(conf.LogDir, conf.LogLeader)
+	if ps.OSName == "windows" {
+		// The web server is running under Windows.  No TLS certificate files are supplied
+		// so we can off HTTP but not HTTPS.  Running as HTTP allows some useful system
+		// testing under Windows.
 		hdlr.Logger.Info("starting http server " + conf.Address)
 		serverStartErr := http.ListenAndServe(conf.Address, nil)
 		if serverStartErr != nil {
@@ -110,30 +119,33 @@ func main() {
 	} else {
 
 		// We are going to run an HTTPS server.  That involves reading the TLS cert files
-		// so we must be root at this point.  We don't want the daily log to be owned by root
-		// so don't create it yet.  Report any problems on stdout.
+		// so we must be root at this point.  Running a web server under root creates all
+		// sorts of security issues so we want to run as a less privilaged user as soon
+		// as possible.  We need to be able to log errors so we create a log file readable
+		// by the user only.  We don't want to have to be root to read it so we change the
+		// owner to the same less privileged user.
 		//
-		// Each night just before midnight the app shuts down.  It's restarted just after
-		// midnight.  Initially it runs as root so that it can read the cert files.  We shut
-		// the server down at the end of each day to support the certificate renewal scheme
-		// used by agencies such as LetsEnrcrypt.  A few days before the current cert becomes
-		// invalid a new cerificate is created.  Both the old cert and the new cert are valid
-		// at first so the cert data that was read earlier that day will still work even
-		// though it's not now the current version.  When the app restarts the next morning it
-		// will pick up the new certificate.  The old cert is then redundant and will become
-		// invalid in a few days.
+		// We are using a Letsencrypt certificate to support HTTPS.  At some point in the
+		// future a new one will be created and a few days after that, the one we are using
+		// will become invalid.  They are both valid during the intervening few days. We need
+		// to be root again to read the new certificate files.  To handle that we use the
+		// same approach as the Apache web server.  The server runs under the control of
+		// another process running as root.  If the server shuts down, the controller waits
+		// a couple of seconds and restarts it.  Each night just before midnight the server
+		// shuts itself down and the control process starts it up again just after midnight.
+		// If a new certificate is created that day, the one we read earier still works.  The
+		// next morning we will pick up the new certificate.  A few days later the old
+		// certificate will become invalid but by then it's redundant.
 		//
-		// To organise the daily restart, the app is run by a shell script that watches for it
-		// shutting down, pauses for a few seconds (to move into the next day) and starts it
-		// up again.  If the server falls over earlier in the day due to some fatal error, it
-		// will be restarted after a couple of seconds and pick up the current certificate.
+		// If the server falls over during the day due to some fatal error, it will be
+		// restarted after a couple of seconds and pick up the current certificate.
 
 		if len(conf.RunUser) <= 0 {
-			log.Fatal("https specified but no run user")
+			hdlr.Fatal(errors.New("https specified but no run user")
 		}
 
 		if len(conf.TLSCertificateFile) == 0 || len(conf.TLSCertificateKeyFile) == 0 {
-			log.Fatal("cert files not specified")
+			hdlr.Fatal(errors.New("cert files not specified"))
 		}
 
 		// The config contains the names of the TLS certificate files.  Read them.
@@ -142,38 +154,43 @@ func main() {
 		certFileBytes, readCertFileError := os.ReadFile(conf.TLSCertificateFile)
 		if readCertFileError != nil {
 			// One obvious explanation is that we are not running as root.
-			if usercontrol.Getuid() != 0 {
-				log.Fatal("must be root to read the TLS cert")
+			if syscall.Getuid() != 0 {
+				hdlr.Fatal(errors.New("must be root to read the TLS cert"))
 			}
-			log.Fatal(readCertFileError.Error())
+			hdlr.Fatal(readCertFileError)
 		}
 
 		keyFileBytes, readKeyFileError := os.ReadFile(conf.TLSCertificateKeyFile)
 		if readKeyFileError != nil {
-			log.Fatal(readKeyFileError.Error())
+			hdlr.Fatal(readKeyFileError)
 		}
 
 		// The config contains the name of the user that this server will run under.
 		// Get the uid.
 		u, userError := user.Lookup(conf.RunUser)
 		if userError != nil {
-			log.Fatal(userError.Error())
+			hdlr.Fatal(userError)
 		}
 
 		userID, idError := strconv.Atoi(u.Uid)
 		if idError != nil {
-			log.Fatal(idError.Error())
+			hdlr.Fatal(idError)
 		}
 
 		// In production the program should start off running as root, so that it can read
 		// the TLS cerificate, but from now on it can run as an ordinary user, specified in
-		// the config.  The Setuid below switches users but it only works under UNIX or
-		// Linux.  Under Windows the function exists but it returns an error, so the program
-		// compiles but it can't run the code here.  The program can run under Windows but
-		// only in HTTP mode, allowing some system testing to be done in that environment.
-		suError := usercontrol.Setuid(userID)
+		// the config.  This only works on the Linux target, not under Windows.
+		//
+		// The Windows version of syscall offers a Getuid but no Setuid, so a program that
+		// calls syscall.Setuid won't compile under Windows.  The portablesyscall.Setuid
+		// exists in all systems.  In a POSIX system such as UNIX or Linux it sets the
+		// user and under Windows it returns an error, so a program that uses it can be
+		// compiled and run under Windows but should avoid calling the function.  The upshot
+		// here is that the server can offer an HTTP service under Windows but not HTTPS.
+		// This allows us to do some system testing under windows.
+		suError := ps.Setuid(userID)
 		if suError != nil {
-			log.Fatal(suError.Error())
+			hdlr.Fatal(suError)
 		}
 
 		// From this point onward the server is running as the non-root user defined by the
@@ -191,9 +208,6 @@ func main() {
 		// If we are restarting because the server fell over earlier in the day due to a fatal
 		// error we will pick up the log file that was created earlier.
 		//
-		// We don't want the daily log file to be owned by root so we wait until now to create
-		// it.  The log directory must be writeable by the user that we just switched to.
-		hdlr.Logger = GetDailyLogger(conf.LogDir, conf.LogLeader)
 
 		message := fmt.Sprintf("Running as an HTTPS server as user %s, uid %d", u.Name, userID)
 		hdlr.Logger.Info(message)
@@ -202,13 +216,14 @@ func main() {
 		now := time.Now()
 		go shutdown.PauseAndShutdown(now)
 
-		// We have a certificate - start an https server.
+		// We have a certificate.  Create a key pair in memory.
 		cert, certError := tls.X509KeyPair(certFileBytes, keyFileBytes)
 		if certError != nil {
 			hdlr.Logger.Error(certError.Error())
 			return
 		}
 
+		// Ceate a TLS config for the HTTPS server.
 		var tlsConfig *tls.Config
 		if len(conf.DBHostname) == 0 {
 			//A hostname is supplied.  Include it in the config.
@@ -222,7 +237,7 @@ func main() {
 			}
 		}
 
-		// Build a server.
+		// Create an HTTPS server.
 		server := http.Server{
 			Addr:      conf.Address,
 			TLSConfig: tlsConfig,
@@ -250,8 +265,21 @@ func GetDailyLogger(logDir, leader string) *slog.Logger {
 	logger := slog.New(slog.NewTextHandler(dailyLogWriter, nil))
 
 	return logger
+}
 
-	// Create a logger which writes to the writer.
-	// logFlags := log.LstdFlags | log.Lshortfile | log.Lmicroseconds
-	// return log.New(dailyLog, leader, logFlags)
+// GetDailyLoggerForUser gets a daily log file which can be written to as a logger
+// (each line decorated with filename, date, time, etc).  The name argument
+// is used to form the log file name.  The file will be owned by the configured
+// user, will be in the configured group and will have the configured permissions 
+func (hdlr *Handler) GetDailyLoggerForUser(logDir, leader string) *slog.Logger {
+	// Creater a daily log writer.
+	name := leader + "."
+	dailyLogWriter := dailylogger.New(logDir, name, ".log")
+
+	// Create a structured logger that writes to the dailyLogWriter.
+	logger := slog.New(slog.NewTextHandler(dailyLogWriter, nil))
+
+	logger.Info("user %s group %s", hdlr.config.User, hdlr.config.LogfileGroup)
+
+	return logger
 }

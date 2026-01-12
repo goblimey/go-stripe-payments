@@ -2,17 +2,20 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 )
 
 // Config holds the configuration.
 type Config struct {
 	// Tehese config values are taken from the given config file.
-	OrganisationName         string  `json:"organisation_name"`           // The name of the organisation for display
-	HTTP                     bool    `json:"http"`                        // true if the server should run as HTTP not HTTPS (usually for testing).
+	OrganisationName         string  `json:"organisation_name"`           // The name of the organisation for display                      // true if the server should run as HTTP not HTTPS (usually for testing).
 	RunUser                  string  `json:"run_user"`                    // The name of the non-root user that will run the server.
+	LogfileGroup             string  `json:"logfile_group"`               // The group that the log file will be in.
+	LogfilePermissions       string  `json:"logfile_permissions"`         // The permission bits for the logfile, an int in octal as a string.
 	TLSCertificateFile       string  `json:"tls_certificate_file"`        // The TLS certificate file.
 	TLSCertificateKeyFile    string  `json:"tls_certificate_key_file"`    // the secret TLS key file.
 	EnableOtherMemberTypes   bool    `json:"enable_other_member_types"`   // Enable associate members, friends etc.
@@ -36,6 +39,9 @@ type Config struct {
 	DBUser          string
 	DBPassword      string
 	Address         string
+
+	// PermissionBits is derived from the string LogfilePermissions.
+	PermissionBits os.FileMode
 }
 
 // GetConfig gets the config from the given file.
@@ -83,7 +89,28 @@ func parseConfigFromBytes(data []byte) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Get the secets from the environment.
+
+	// The permission bits are supplied as a string containing an int in LogfilePermissions.
+	// If the first character is 0, the value is an octal number, eg "0744".  Convert this
+	// to an os.FileMode (which is a renamed uint32).
+	v, pe := strconv.ParseInt(config.LogfilePermissions, 0, 32)
+	if pe != nil {
+		return nil, pe
+	}
+
+	// value cannot be negative.
+	if v < 0 {
+		return nil, errors.New("log file permissions cannot be negative")
+	}
+
+	if v > 0777 {
+		em := fmt.Sprintf("log file permissions too big - %O", v)
+		return nil, errors.New(em)
+	}
+
+	config.PermissionBits = os.FileMode(v)
+
+	// Get the secrets from the environment.
 
 	// The stripe secret key.
 	config.StripeSecretKey = os.Getenv("StripeSecretKey")

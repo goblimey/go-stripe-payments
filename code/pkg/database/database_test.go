@@ -1,6 +1,7 @@
 package database
 
 import (
+	"reflect"
 	"testing"
 )
 
@@ -168,7 +169,7 @@ func TestUpdateRowWithAssociate(t *testing.T) {
 			return
 		}
 
-		if *ms2 != ms2Orig {
+		if !reflect.DeepEqual(*ms2, ms2Orig) {
 			t.Error("fetched ms does not match original")
 			return
 		}
@@ -215,7 +216,7 @@ func TestUpdateRowWithAssociate(t *testing.T) {
 		}
 
 		// Check
-		if *ms3 != ms2Copy {
+		if !reflect.DeepEqual(*ms3, ms2Copy) {
 			t.Error("fetched ms does not match original")
 			return
 		}
@@ -229,7 +230,7 @@ func TestUpdateRowWithAssociate(t *testing.T) {
 			return
 		}
 
-		if *ms1Fetched != ms1 {
+		if !reflect.DeepEqual(*ms1Fetched, ms1) {
 			t.Error("fetched ms does not match original - that record that should not be touched.")
 			return
 		}
@@ -338,7 +339,7 @@ func TestUpdateRowWithNoAssociate(t *testing.T) {
 			return
 		}
 
-		if *ms2 != ms2Orig {
+		if !reflect.DeepEqual(*ms2, ms2Orig) {
 			t.Error("fetched ms does not match original")
 			return
 		}
@@ -381,7 +382,7 @@ func TestUpdateRowWithNoAssociate(t *testing.T) {
 		}
 
 		// Check
-		if *ms3 != ms2Copy {
+		if !reflect.DeepEqual(*ms3, ms2Copy) {
 			t.Error("fetched ms does not match original")
 			return
 		}
@@ -395,7 +396,7 @@ func TestUpdateRowWithNoAssociate(t *testing.T) {
 			return
 		}
 
-		if *ms1Fetched != ms1 {
+		if !reflect.DeepEqual(*ms1Fetched, ms1) {
 			t.Error("fetched ms does not match original - that record that should not be touched.")
 			return
 		}

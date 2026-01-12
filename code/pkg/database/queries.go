@@ -602,11 +602,13 @@ func (db *Database) GetUsers() ([]User, error) {
 func (db *Database) GetUsersByLoginName(name string) ([]User, error) {
 
 	// The password may be null (which prevents login).
-	// Postgres uses COALESCE to convert NULL to a readable value, SQLite uses IFNULL
+	// Postgres uses COALESCE to convert NULL to a readable value, SQLite uses IFNULL.
+	// The name comarison is case-insensitive because it may be supplied by the user
+	// and they may type it differently in different years.
 	const queryTemplate = `
-		SELECT usr_id, usr_uuid, %s(lower(usr_password), ''), usr_valid
+		SELECT usr_id, usr_uuid, %s(usr_password, ''), usr_valid
 		FROM adm_users
-		WHERE usr_login_name = lower($1);
+		WHERE lower(usr_login_name) = lower($1);
 	`
 
 	var q string
@@ -641,6 +643,35 @@ func (db *Database) GetUsersByLoginName(name string) ([]User, error) {
 	}
 
 	return users, nil
+}
+
+// GetUserByLoginName gets the user with the given login name (case-insensitive).
+// That field has a unique constraint so there will be at most one result.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) GetUserByLoginName(name string) (*User, error) {
+
+	// The password may be null (which prevents login).
+	const queryTemplate = `
+		SELECT usr_id, usr_uuid, %s(lower(usr_password), ''), usr_valid
+		FROM adm_users
+		WHERE lower(usr_login_name) = lower($1);
+	`
+
+	var q string
+	switch db.Config.Type {
+	case "postgres":
+		q = fmt.Sprintf(queryTemplate, "COALESCE")
+	default:
+		q = fmt.Sprintf(queryTemplate, "IFNULL")
+	}
+
+	user := NewUser(name)
+	err := db.QueryRow(q, name).Scan(&user.ID, &user.UUID, &user.Password, &user.Valid)
+	if err != nil {
+		return nil, err
+	}
+
+	return user, nil
 }
 
 // DeleteUser deletes the given user from the database and sets the ID in the object
@@ -780,115 +811,49 @@ func (ms *MembershipSale) Create(db *Database) (int64, error) {
 
 	var id int64
 	var createError error
-
 	switch {
-	case ms.UserID == 0:
-		// No ordinary user is specified.  This happens on a new membership rather than
-		// a renewal - the users are not created until later when the fee has been paid.
-		// The associate user should be 0 as well but in any case the sale record will
-		// be updated when the sale completes.  One or both of the users will be created
-		// and the membership sales table will be updated with the IDs.
-
+	case ms.UserID <= 0 && ms.AssocUserID <= 0:
+		// Both foreign keys should be NULL.
 		const sqlTemplate = `
-			INSERT INTO membership_sales (
-				%s
-				ms_usr1_id,
-				ms_usr2_id, 
-				ms_payment_service,
-				ms_payment_status,
-				ms_payment_id,
-				ms_transaction_type,
-				ms_membership_year,
-				ms_usr1_fee,
-				ms_usr1_friend,
-				ms_usr1_friend_fee,
-				ms_usr1_first_name,
-				ms_usr1_last_name,
-				ms_usr1_email,
-				ms_usr2_fee,
-				ms_usr2_friend,
-				ms_usr2_friend_fee,
-				ms_usr2_first_name,
-				ms_usr2_last_name,
-				ms_usr2_email,
-				ms_donation,
-				ms_donation_museum,
-				ms_giftaid
-			) 
-			VALUES
-			(
-				%s 
-				NULL, NULL, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 
-					$16, $17, $18, $19, $20
-			)
-			%s;
-		`
+				INSERT INTO membership_sales (
+					%s
+					ms_usr1_id,
+					ms_usr2_id,
 
-		sql := ms.fixSaleFormCreateStatement(db, sqlTemplate)
+					ms_payment_service,
+					ms_payment_status,
+					ms_payment_id,
+					ms_transaction_type,
+					ms_membership_year,
+					ms_usr1_fee,
+					ms_usr1_friend,
+					ms_usr1_friend_fee,
+					ms_usr1_title,
+					ms_usr1_first_name,
 
-		id, createError = db.CreateRow(
-			sql,
-			ms.PaymentService,
-			ms.PaymentStatus,
-			ms.PaymentID,
-			ms.TransactionType,
-			ms.MembershipYear,
-			ms.OrdinaryMemberFeePaid,
-			ms.Friend,
-			ms.FriendFeePaid,
-			ms.FirstName,
-			ms.LastName,
-			ms.Email,
-			ms.AssocFeePaid,
-			ms.AssocFriend,
-			ms.AssocFriendFeePaid,
-			ms.AssocFirstName,
-			ms.AssocLastName,
-			ms.AssocEmail,
-			ms.DonationToSociety,
-			ms.DonationToMuseum,
-			ms.Giftaid,
-		)
+					ms_usr1_last_name,
+					ms_usr1_email,
+					ms_usr2_fee,
+					ms_usr2_friend,
+					ms_usr2_friend_fee,
+					ms_usr2_title,
+					ms_usr2_first_name,
+					ms_usr2_last_name,
+					ms_usr2_email,
+					ms_donation,
 
-	case ms.AssocUserID > 0:
-		// If the ordinary member ID is also zero, the previous clause will run, so this
-		// clause is actually invoked by ms.OrdinaryMemberID > 0 && ms.AssocUserID > 0
-		// (a membership renewal with an associate member).  Set both IDs.
-
-		const sqlTemplate = `
-			INSERT INTO membership_sales (
-				%s 
-				ms_payment_service,
-				ms_payment_status,
-				ms_payment_id,
-				ms_transaction_type,
-				ms_membership_year,
-				ms_usr1_id,
-				ms_usr1_fee,
-				ms_usr1_friend,
-				ms_usr1_friend_fee,
-				ms_usr1_first_name,
-				ms_usr1_last_name,
-				ms_usr1_email,
-				ms_usr2_id,
-				ms_usr2_fee,
-				ms_usr2_friend,
-				ms_usr2_friend_fee,
-				ms_usr2_first_name,
-				ms_usr2_last_name,
-				ms_usr2_email,
-				ms_donation,
-				ms_donation_museum,
-				ms_giftaid
-			) 
-			VALUES
-			(
-				%s 
-				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 
+					ms_donation_museum,
+					ms_giftaid
+				)
+				VALUES
+				(
+					%s
+					NULL, NULL,
+					$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
 					$16, $17, $18, $19, $20, $21, $22
-			)
-			%s;
-		`
+				)
+				%s;
+			`
 
 		sql := ms.fixSaleFormCreateStatement(db, sqlTemplate)
 
@@ -899,34 +864,35 @@ func (ms *MembershipSale) Create(db *Database) (int64, error) {
 			ms.PaymentID,
 			ms.TransactionType,
 			ms.MembershipYear,
-			ms.UserID,
 			ms.OrdinaryMemberFeePaid,
 			ms.Friend,
 			ms.FriendFeePaid,
+			ms.Title,
 			ms.FirstName,
+
 			ms.LastName,
 			ms.Email,
-			ms.AssocUserID,
 			ms.AssocFeePaid,
 			ms.AssocFriend,
 			ms.AssocFriendFeePaid,
+			ms.AssocTitle,
 			ms.AssocFirstName,
 			ms.AssocLastName,
 			ms.AssocEmail,
 			ms.DonationToSociety,
+
 			ms.DonationToMuseum,
 			ms.Giftaid,
 		)
 
-	default:
-		// The ID of the ordinary user is > 0 but the ID associate user is 0 - a
-		// renewal where the ordinary user has no associate.  Set the ordinary
-		// user ID but not the associate ID,  set the associate fees to zero and set
-		// the associate friend flag to false.
+	case ms.AssocUserID <= 0:
+		// The user's foreign key is set but the associate foreign key should be null.
+		// This is an ordinary user with no associate.
 		const sqlTemplate = `
 				INSERT INTO membership_sales (
 					%s
 					ms_usr2_id,
+
 					ms_payment_service,
 					ms_payment_status,
 					ms_payment_id,
@@ -936,30 +902,38 @@ func (ms *MembershipSale) Create(db *Database) (int64, error) {
 					ms_usr1_fee,
 					ms_usr1_friend,
 					ms_usr1_friend_fee,
+					ms_usr1_title,
+
 					ms_usr1_first_name,
 					ms_usr1_last_name,
 					ms_usr1_email,
+					ms_usr2_fee,
+					ms_usr2_friend,
+					ms_usr2_friend_fee,
+					ms_usr2_title,
+					ms_usr2_first_name,
+					ms_usr2_last_name,
+					ms_usr2_email,
+
 					ms_donation,
 					ms_donation_museum,
-					ms_giftaid,
-					ms_usr2_fee,
-					ms_usr2_friend_fee,
-					ms_usr2_friend
-				) 
-				Values
+					ms_giftaid
+				)
+				VALUES
 				(
-					%s 
-					NULL, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 
-					0.0, 0.0, 'f'
+					%s
+					NULL,
+					$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+					$16, $17, $18, $19, $20, $21, $22, $23
 				)
 				%s;
 			`
 
-		sql := ms.fixMembershipSaleCreateStatement(db, sqlTemplate)
+		sql := ms.fixSaleFormCreateStatement(db, sqlTemplate)
 
-		// The payment ID may be an empty string, to be set later.
 		id, createError = db.CreateRow(
 			sql,
+
 			ms.PaymentService,
 			ms.PaymentStatus,
 			ms.PaymentID,
@@ -969,9 +943,169 @@ func (ms *MembershipSale) Create(db *Database) (int64, error) {
 			ms.OrdinaryMemberFeePaid,
 			ms.Friend,
 			ms.FriendFeePaid,
+			ms.Title,
+
 			ms.FirstName,
 			ms.LastName,
 			ms.Email,
+			ms.AssocFeePaid,
+			ms.AssocFriend,
+			ms.AssocFriendFeePaid,
+			ms.AssocTitle,
+			ms.AssocFirstName,
+			ms.AssocLastName,
+			ms.AssocEmail,
+
+			ms.DonationToSociety,
+			ms.DonationToMuseum,
+			ms.Giftaid,
+		)
+
+	case ms.UserID <= 0:
+		// Edge case.  The user's foreign key should be null but the associate foreign
+		// key is set.  (This should not happen in this app.)
+		const sqlTemplate = `
+				INSERT INTO membership_sales (
+					%s
+					ms_usr1_id,
+
+					ms_payment_service,
+					ms_payment_status,
+					ms_payment_id,
+					ms_transaction_type,
+					ms_membership_year,
+					ms_usr1_fee,
+					ms_usr1_friend,
+					ms_usr1_friend_fee,
+					ms_usr1_title,
+					ms_usr1_first_name,
+
+					ms_usr1_last_name,
+					ms_usr1_email,
+					ms_usr2_id,
+					ms_usr2_fee,
+					ms_usr2_friend,
+					ms_usr2_friend_fee,
+					ms_usr2_title,
+					ms_usr2_first_name,
+					ms_usr2_last_name,
+					ms_usr2_email,
+
+					ms_donation,
+					ms_donation_museum,
+					ms_giftaid
+				)
+				VALUES
+				(
+					%s
+					NULL,
+					$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+					$16, $17, $18, $19, $20, $21, $22, $23
+				)
+				%s;
+			`
+
+		sql := ms.fixSaleFormCreateStatement(db, sqlTemplate)
+
+		id, createError = db.CreateRow(
+			sql,
+
+			ms.PaymentService,
+			ms.PaymentStatus,
+			ms.PaymentID,
+			ms.TransactionType,
+			ms.MembershipYear,
+			ms.OrdinaryMemberFeePaid,
+			ms.Friend,
+			ms.FriendFeePaid,
+			ms.Title,
+			ms.FirstName,
+
+			ms.LastName,
+			ms.Email,
+			ms.AssocUserID,
+			ms.AssocFeePaid,
+			ms.AssocFriend,
+			ms.AssocFriendFeePaid,
+			ms.AssocTitle,
+			ms.AssocFirstName,
+			ms.AssocLastName,
+			ms.AssocEmail,
+
+			ms.DonationToSociety,
+			ms.DonationToMuseum,
+			ms.Giftaid,
+		)
+
+	default:
+		const sqlTemplate = `
+			INSERT INTO membership_sales (
+				%s 
+
+				ms_payment_service,
+				ms_payment_status,
+				ms_payment_id,
+				ms_transaction_type,
+				ms_membership_year,
+				ms_usr1_id,
+				ms_usr1_fee,
+				ms_usr1_friend,
+				ms_usr1_friend_fee,
+				ms_usr1_title,
+
+				ms_usr1_first_name,
+				ms_usr1_last_name,
+				ms_usr1_email,
+				ms_usr2_id,
+				ms_usr2_fee,
+				ms_usr2_friend,
+				ms_usr2_friend_fee,
+				ms_usr2_title,
+				ms_usr2_first_name,
+				ms_usr2_last_name,
+
+				ms_usr2_email,
+				ms_donation,
+				ms_donation_museum,
+				ms_giftaid       
+			) 
+			VALUES
+			(
+				%s 
+				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+				$15, $16, $17, $18, $19, $20, $21, $22, $23, $24
+			)
+			%s;
+		`
+
+		sql := ms.fixSaleFormCreateStatement(db, sqlTemplate)
+
+		id, createError = db.CreateRow(
+			sql,
+
+			ms.PaymentService,
+			ms.PaymentStatus,
+			ms.PaymentID,
+			ms.TransactionType,
+			ms.MembershipYear,
+			ms.UserID,
+			ms.OrdinaryMemberFeePaid,
+			ms.Friend,
+			ms.FriendFeePaid,
+			ms.Title,
+
+			ms.FirstName,
+			ms.LastName,
+			ms.Email,
+			ms.AssocUserID,
+			ms.AssocFeePaid,
+			ms.AssocFriend,
+			ms.AssocFriendFeePaid,
+			ms.AssocTitle,
+			ms.AssocFirstName,
+			ms.AssocLastName,
+
+			ms.AssocEmail,
 			ms.DonationToSociety,
 			ms.DonationToMuseum,
 			ms.Giftaid,
@@ -984,6 +1118,7 @@ func (ms *MembershipSale) Create(db *Database) (int64, error) {
 	}
 
 	return id, createError
+
 }
 
 // fixMembershipSaleCreateStatement takes an Sprintf template with three string placeholders
@@ -1020,33 +1155,41 @@ func (db *Database) GetMembershipSale(id int64) (*MembershipSale, error) {
 		ms_payment_status,
 		ms_payment_id,
 		ms_membership_year,
+		ms_transaction_type,
 		%s(ms_usr1_id, 0),
-		ms_usr1_friend,
-		%s(ms_usr2_id, 0),
-		ms_usr2_friend,
+		%s(ms_usr1_title, ''),
+		ms_usr1_first_name,
+		ms_usr1_last_name,
+
+		ms_usr1_email,
 		ms_usr1_fee,
-		ms_usr2_fee,
+		ms_usr1_friend,
 		ms_usr1_friend_fee,
-		ms_usr2_friend_fee,
 		ms_donation,
 		ms_donation_museum,
 		ms_giftaid,
-		ms_transaction_type,
-		ms_usr1_first_name,
-		ms_usr1_last_name,
-		ms_usr1_email,
+		%s(ms_usr2_id, 0),
+		%s(ms_usr2_title, ''),
 		%s(ms_usr2_first_name, ''),
 		%s(ms_usr2_last_name, ''),
-		%s(ms_usr2_email, '')
+		%s(ms_usr2_email, ''),
+		ms_usr2_fee,
+		ms_usr2_friend,
+		ms_usr2_friend_fee
+		
 	FROM membership_sales
 	WHERE ms_id = $1;
 `
+
 	var query string
 	switch db.Config.Type {
 	case "postgres":
-		query = fmt.Sprintf(queryTemplate, "COALESCE", "COALESCE", "COALESCE", "COALESCE", "COALESCE")
+		query = fmt.Sprintf(queryTemplate, "COALESCE", "COALESCE", "COALESCE", "COALESCE", "COALESCE", "COALESCE", "COALESCE")
+		// query = fmt.Sprintf(queryTemplate, "COALESCE", "COALESCE", "COALESCE", "COALESCE", "COALESCE", "COALESCE", "COALESCE")
+		// query = fmt.Sprintf(queryTemplate, "COALESCE", "COALESCE", "COALESCE", "COALESCE", "COALESCE")
 	default:
-		query = fmt.Sprintf(queryTemplate, "IFNULL", "IFNULL", "IFNULL", "IFNULL", "IFNULL")
+		query = fmt.Sprintf(queryTemplate, "IFNULL", "IFNULL", "IFNULL", "IFNULL", "IFNULL", "IFNULL", "IFNULL")
+		// query = fmt.Sprintf(queryTemplate, "IFNULL", "IFNULL", "IFNULL", "IFNULL", "IFNULL")
 	}
 
 	row, searchErr := db.Query(query, id)
@@ -1067,24 +1210,28 @@ func (db *Database) GetMembershipSale(id int64) (*MembershipSale, error) {
 		&ms.PaymentStatus,
 		&ms.PaymentID,
 		&ms.MembershipYear,
+		&ms.TransactionType,
 		&ms.UserID,
-		&ms.Friend,
-		&ms.AssocUserID,
-		&ms.AssocFriend,
+		&ms.Title,
+		&ms.FirstName,
+		&ms.LastName,
+
+		&ms.Email,
 		&ms.OrdinaryMemberFeePaid,
-		&ms.AssocFeePaid,
+		&ms.Friend,
 		&ms.FriendFeePaid,
-		&ms.AssocFriendFeePaid,
 		&ms.DonationToSociety,
 		&ms.DonationToMuseum,
 		&ms.Giftaid,
-		&ms.TransactionType,
-		&ms.FirstName,
-		&ms.LastName,
-		&ms.Email,
+		&ms.AssocUserID,
+		&ms.AssocTitle,
 		&ms.AssocFirstName,
+
 		&ms.AssocLastName,
 		&ms.AssocEmail,
+		&ms.AssocFeePaid,
+		&ms.AssocFriend,
+		&ms.AssocFriendFeePaid,
 	)
 	if err != nil {
 		return nil, err
@@ -1134,124 +1281,70 @@ func (ms *MembershipSale) Update(db *Database) error {
 	var rowsAffected int64
 	var createError error
 
-	switch {
-	case ms.UserID == 0:
-		// No ordinary user is specified.  This is an error by the caller.
-		return errors.New("user ID is zero")
-
-	case ms.AssocUserID > 0:
-		// There is an ordinary member and an associate member.
-		const sql = `
+	// There is an ordinary member and an associate member.
+	const sql = `
 			UPDATE membership_sales SET
 				ms_payment_service = $1,
 				ms_payment_status = $2,
 				ms_payment_id = $3,
 				ms_transaction_type = $4,
 				ms_membership_year = $5,
-				ms_usr1_id = $6,
+				ms_usr1_id = NULLIF($6, 0),
 				ms_usr1_fee = $7,
 				ms_usr1_friend = $8,
 				ms_usr1_friend_fee = $9,
-				ms_usr1_first_name = $10,
-				ms_usr1_last_name = $11,
-				ms_usr1_email = $12,
-				ms_usr2_id = $13,
-				ms_usr2_fee = $14,
-				ms_usr2_friend = $15,
-				ms_usr2_friend_fee = $16,
-				ms_usr2_first_name = $17,
-				ms_usr2_last_name = $18,
-				ms_usr2_email = $19,
-				ms_donation=  $20,
-				ms_donation_museum = $21,
-				ms_giftaid = $22
-			WHERE ms_id=$23;
+				ms_usr1_title = $10,
+
+				ms_usr1_first_name = $11,
+				ms_usr1_last_name = $12,
+				ms_usr1_email = $13,
+				ms_usr2_id = NULLIF($14, 0),
+				ms_usr2_fee = $15,
+				ms_usr2_friend = $16,
+				ms_usr2_friend_fee = $17,
+				ms_usr2_title = $18,
+				ms_usr2_first_name = $19,
+				ms_usr2_last_name = $20,
+
+				ms_usr2_email = $21,
+				ms_donation=  $22,
+				ms_donation_museum = $23,
+				ms_giftaid = $24
+
+			WHERE ms_id=$25;
 		`
 
-		rowsAffected, createError = db.UpdateRow(
-			sql,
-			ms.PaymentService,
-			ms.PaymentStatus,
-			ms.PaymentID,
-			ms.TransactionType,
-			ms.MembershipYear,
-			ms.UserID,
-			ms.OrdinaryMemberFeePaid,
-			friend,
-			ms.FriendFeePaid,
-			ms.FirstName,
-			ms.LastName,
-			ms.Email,
-			ms.AssocUserID,
-			ms.AssocFeePaid,
-			ms.AssocFriend,
-			ms.AssocFriendFeePaid,
-			ms.AssocFirstName,
-			ms.AssocLastName,
-			ms.AssocEmail,
-			ms.DonationToSociety,
-			ms.DonationToMuseum,
-			giftaid,
+	rowsAffected, createError = db.UpdateRow(
+		sql,
+		ms.PaymentService,
+		ms.PaymentStatus,
+		ms.PaymentID,
+		ms.TransactionType,
+		ms.MembershipYear,
+		ms.UserID,
+		ms.OrdinaryMemberFeePaid,
+		friend,
+		ms.FriendFeePaid,
+		ms.Title,
 
-			ms.ID, // WHERE clause.
-		)
+		ms.FirstName,
+		ms.LastName,
+		ms.Email,
+		ms.AssocUserID,
+		ms.AssocFeePaid,
+		ms.AssocFriend,
+		ms.AssocFriendFeePaid,
+		ms.AssocTitle,
+		ms.AssocFirstName,
+		ms.AssocLastName,
 
-	default:
-		// The ID of the associate user is 0 - a sale where the ordinary user has no
-		// associate.  Set the ordinary user ID but not the associate ID,  set the
-		// associate fees to zero and set the associate friend flag to false.
-		const sql = `
-				UPDATE membership_sales SET
-					ms_payment_service = $1,
-					ms_payment_status = $2,
-					ms_payment_id =$3,
-					ms_transaction_type = $4,
-					ms_membership_year = $5,
-					ms_usr1_id = $6,
-					ms_usr1_fee = $7,
-					ms_usr1_friend = $8,
-					ms_usr1_friend_fee = $9,
-					ms_usr1_first_name =$10,
-					ms_usr1_last_name =$11,
-					ms_usr1_email = $12,
-					ms_donation = $13,
-					ms_donation_museum = $14,
-					ms_giftaid = $15,
+		ms.AssocEmail,
+		ms.DonationToSociety,
+		ms.DonationToMuseum,
+		giftaid,
 
-					-- No associate.
-					ms_usr2_id = null,
-					ms_usr2_fee = 0.0,
-					ms_usr2_friend = 'f',
-					ms_usr2_friend_fee = 0.0,
-					ms_usr2_first_name = '',
-					ms_usr2_last_name = '',
-					ms_usr2_email = ''
-
-				WHERE ms_id = $16;
-			`
-
-		// The payment ID may be an empty string, to be set later.
-		rowsAffected, createError = db.UpdateRow(
-			sql,
-			ms.PaymentService,
-			ms.PaymentStatus,
-			ms.PaymentID,
-			ms.TransactionType,
-			ms.MembershipYear,
-			ms.UserID,
-			ms.OrdinaryMemberFeePaid,
-			friend,
-			ms.FriendFeePaid,
-			ms.FirstName,
-			ms.LastName,
-			ms.Email,
-			ms.DonationToSociety,
-			ms.DonationToMuseum,
-			giftaid,
-
-			ms.ID, // WHERE clause.
-		)
-	}
+		ms.ID, // for the WHERE clause.
+	)
 
 	if createError != nil {
 		return createError
@@ -1367,7 +1460,7 @@ func (db *Database) DeleteMember(m *Member) error {
 	return nil
 }
 
-// GetMember gest the member with the given ID.
+// GetMember gets the member with the given ID.
 // It's assumed that a transaction is already set up in the db object.
 func (db *Database) GetMember(id int64) (*Member, error) {
 	const q = `
@@ -1387,9 +1480,225 @@ func (db *Database) GetMember(id int64) (*Member, error) {
 	return m, nil
 }
 
+// GetInterests get the list of interests from adm_members_interest.
+func (db *Database) GetInterests() ([]Interest, error) {
+
+	mis := make([]Interest, 0)
+
+	q := `
+		select ntrst_id, ntrst_name 
+		from adm_interests
+		order by ntrst_id;
+	`
+
+	rows, err := db.Query(q)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			// The query worked but the table is empty.
+			return mis, nil
+		}
+		// the query failed.
+		return nil, err
+	}
+	defer rows.Close()
+
+	for {
+		if !rows.Next() {
+			break
+		}
+
+		var mi Interest
+		err := rows.Scan(&mi.ID, &mi.Name)
+		if err != nil {
+			return nil, err
+		}
+		mis = append(mis, mi)
+	}
+
+	return mis, nil
+}
+
+// CreateMembersInterest links a user to an interest if a linkage does not
+// already exist.  If the linkage already exists, the ID will remain set to
+// zero. It's assumed that a transaction is set up in the db object.
+func (db *Database) CreateMembersInterest(mi *MembersInterest) error {
+
+	// Insert the record if not already done (upsert).
+
+	const qPostgres = `
+	insert into adm_members_interests(mi_usr_id, mi_interest_id) 
+		values($1, $2)
+		on conflict(mi_usr_id, mi_interest_id) do nothing
+		RETURNING mi_id;`
+
+	const qSQLite = `
+	insert into adm_members_interests(mi_usr_id, mi_interest_id)
+		values(?, ?)
+		on conflict(mi_usr_id, mi_interest_id) do nothing;`
+
+	var q string
+	switch db.Config.Type {
+	case "postgres":
+		q = qPostgres
+	default:
+		q = qSQLite
+	}
+
+	// If the database is postgres and the unique constraint prevents the insert,
+	// the attempt to get the mi_id will fail and produce a "no rows" error.  That's
+	// expected behaviour.  Leave mi.ID set to zero.
+	id, err := db.CreateRow(q, mi.UserID, mi.InterestID)
+	if err != nil {
+		if db.Config.Type == "postgres" && err.Error() == "sql: no rows in result set" {
+			return nil
+		}
+		return err
+	}
+
+	mi.ID = id
+
+	return nil
+}
+
+// GetMembersInterestsForUser gets the adm_member_interest rows for the given user.
+// It's assumed that a transaction is already set up.
+func (db *Database) GetMembersInterests(userID int64) ([]MembersInterest, error) {
+
+	mis := make([]MembersInterest, 0)
+	// Ordering the result helps testing.
+	q := `
+		select mi_id, mi_usr_id, mi_interest_id 
+		from adm_members_interests 
+		where mi_usr_id=$1
+		order by mi_id;
+	`
+
+	rows, err := db.Query(q, userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return mis, nil
+		}
+		return nil, err
+	}
+	defer rows.Close()
+
+	for {
+		if !rows.Next() {
+			break
+		}
+
+		var mi MembersInterest
+		err := rows.Scan(&mi.ID, &mi.UserID, &mi.InterestID)
+		if err != nil {
+			return nil, err
+		}
+		mis = append(mis, mi)
+	}
+
+	return mis, nil
+}
+
+// GetMembersOtherInterestsForUser gets the members other interests for the user with the
+// given ID.  It's assumed that a transaction is already set up in the db object.
+func (db *Database) GetMembersOtherInterests(userID int64) (*MembersOtherInterests, error) {
+
+	const query = `
+		SELECT moi_id, moi_usr_id, moi_interests
+		FROM adm_members_other_interests
+		WHERE moi_usr_id = $1;
+	`
+
+	var moi MembersOtherInterests
+
+	err := db.QueryRow(query, userID).Scan(&moi.ID, &moi.UserID, &moi.Interests)
+	if err != nil {
+		return nil, err
+	}
+
+	return &moi, nil
+}
+
+// CreateMembersOtherInterests creates the given user's other interests record.
+//
+//	The function assumes that a transaction is already set up in the db object.
+func (db *Database) CreateMembersOtherInterests(moi *MembersOtherInterests) error {
+
+	// Insert the interests if not already done (upsert).
+	const qPostgres = `
+		insert into adm_members_other_interests
+		(moi_usr_id,moi_interests)
+		values($1, $2)
+		RETURNING moi_id;
+	`
+
+	const qSQLite = `
+		insert into adm_members_other_interests
+		(moi_usr_id,moi_interests)
+		values(?, ?);
+	`
+
+	var q string
+	switch db.Config.Type {
+	case "postgres":
+		q = qPostgres
+	default:
+		q = qSQLite
+	}
+
+	id, createError := db.CreateRow(q, moi.UserID, moi.Interests)
+
+	if createError != nil {
+		return createError
+	}
+
+	moi.ID = id
+
+	return nil
+}
+
+// UpdateMembersOtherInterests updates the given user's other interests.
+func (db *Database) UpdateMembersOtherInterests(moi *MembersOtherInterests) error {
+	const sql = `
+		UPDATE adm_members_other_interests 
+		SET moi_interests=$1
+		WHERE moi_usr_id=$2;
+	`
+
+	_, updateError := db.Exec(sql, moi.Interests, moi.UserID)
+
+	if updateError != nil {
+		return updateError
+	}
+
+	return nil
+}
+
+// Update the users other interests or, if a record already exists, update it.
+// The function assumes that a transaction has been set up.
+func (db *Database) UpsertMembersOtherInterests(moi *MembersOtherInterests) error {
+	moiFetched, fetchError := db.GetMembersOtherInterests(moi.UserID)
+	if fetchError == nil {
+		// There is already a record.  Update it.
+		moiFetched.Interests = moi.Interests
+		err := db.UpdateMembersOtherInterests(moiFetched)
+		if err != nil {
+			return err
+		}
+	} else {
+		// Thee is no record yet.  Create one.
+		err := db.CreateMembersOtherInterests(moi)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Success.
+	return nil
+}
+
 // CreateUserAndMember creates a user and associated records (member, first name field etc).
 // It's assumed that a transaction is already set up in the db object.
-func (db *Database) CreateUserAndMember(loginName, firstName, lastName string, role *Role, startTime, endTime time.Time) (*User, *Member, error) {
+func (db *Database) CreateUserAndMember(loginName, title, firstName, lastName string, role *Role, startTime, endTime time.Time) (*User, *Member, error) {
 
 	user := NewUser(loginName)
 	uError := db.CreateUser(user)
@@ -1404,6 +1713,16 @@ func (db *Database) CreateUserAndMember(loginName, firstName, lastName string, r
 	emError := SetUserDataField(db, em, user.ID, loginName)
 	if emError != nil {
 		return nil, nil, emError
+	}
+
+	// Set Title (Mr, Ms, Dr etc) - Salutation.
+	it, tne := db.GetUserDataFieldIDByNameIntern("SALUTATION")
+	if tne != nil {
+		return nil, nil, tne
+	}
+	tError := SetUserDataField(db, it, user.ID, title)
+	if tError != nil {
+		return nil, nil, tError
 	}
 
 	ifn, fne := db.GetUserDataFieldIDByNameIntern("FIRST_NAME")
@@ -1530,10 +1849,7 @@ func (db *Database) CreateAccounts(sale *MembershipSale, now time.Time, endTime 
 	if namesError != nil {
 		return 0, 0, namesError
 	}
-	// m := fmt.Sprintf("creating users %s %s %s %s %s %s",
-	// 	sale.FirstName, sale.LastName, sale.Email,
-	// 	sale.AssocFirstName, sale.AssocLastName, sale.AssocEmail)
-	// slog.Info(m)
+
 	// Create the user for the ordinary account.
 	ordinaryUser := NewUser(name[0])
 	createOrdinaryUserError := db.CreateUser(ordinaryUser)
@@ -1553,45 +1869,6 @@ func (db *Database) CreateAccounts(sale *MembershipSale, now time.Time, endTime 
 	createMemberError := db.CreateMember(member)
 	if createMemberError != nil {
 		return 0, 0, createMemberError
-	}
-
-	// Set the date last paid.
-	dlpError := db.SetDateLastPaid(sale.UserID, now)
-	if dlpError != nil {
-		return 0, 0, dlpError
-	}
-
-	// Set the first name.
-	fnFieldID, fnFieldError := db.GetUserDataFieldIDByNameIntern("FIRST_NAME")
-	if fnFieldError != nil {
-		return 0, 0, fnFieldError
-	}
-
-	omFNError := SetUserDataField(db, fnFieldID, sale.UserID, sale.FirstName)
-	if omFNError != nil {
-		return 0, 0, omFNError
-	}
-
-	// Set the last name.
-	lnFieldID, lnFieldError := db.GetUserDataFieldIDByNameIntern("LAST_NAME")
-	if lnFieldError != nil {
-		return 0, 0, fnFieldError
-	}
-
-	omLNError := SetUserDataField(db, lnFieldID, sale.UserID, sale.LastName)
-	if omLNError != nil {
-		return 0, 0, omLNError
-	}
-
-	// Set the email address.
-	eFieldID, eFieldError := db.GetUserDataFieldIDByNameIntern("EMAIL")
-	if eFieldError != nil {
-		return 0, 0, eFieldError
-	}
-
-	omLError := SetUserDataField(db, eFieldID, sale.UserID, sale.Email)
-	if omLError != nil {
-		return 0, 0, omLError
 	}
 
 	if len(name) == 1 {
@@ -1617,26 +1894,6 @@ func (db *Database) CreateAccounts(sale *MembershipSale, now time.Time, endTime 
 		return 0, 0, createAssocMemberError
 	}
 
-	// Set the first name.
-	aLNError := SetUserDataField(db, fnFieldID, sale.AssocUserID, sale.AssocFirstName)
-	if aLNError != nil {
-		return 0, 0, aLNError
-	}
-
-	// Set the last name.
-	aFNError := SetUserDataField(db, lnFieldID, sale.AssocUserID, sale.AssocLastName)
-	if aFNError != nil {
-		return 0, 0, aFNError
-	}
-
-	if len(sale.AssocEmail) > 0 {
-		// Set the associate's email address.
-		eError := SetUserDataField(db, eFieldID, sale.AssocUserID, sale.AssocEmail)
-		if eError != nil {
-			return 0, 0, eError
-		}
-	}
-
 	return ordinaryUser.ID, assocUser.ID, nil
 }
 
@@ -1657,15 +1914,18 @@ func getLoginNames(sale *MembershipSale) ([]string, error) {
 	result = append(result, sale.Email)
 
 	if len(sale.AssocFirstName) > 0 {
-		// The sale includes an associate member, who may or may not
-		// have an email address.
-
-		if len(sale.AssocEmail) > 0 {
-			result = append(result, sale.AssocEmail)
-		} else {
-			// No email address.  Use the name - "first.last".
+		// The sale includes an associate member, who may or may not have an
+		//email address.  If it's the same as the ordinary member, ignore it.
+		// (If they share an email address they don't want two copies of our
+		// emails.  In any case, two members with the same email address causes
+		// problems when they try to change their Admidio password.)
+		if len(sale.AssocEmail) <= 0 || sale.AssocEmail == sale.Email {
+			// Use the name - "first.last" as the associate user's account name.
 			loginName := sale.AssocFirstName + "." + sale.AssocLastName
 			result = append(result, loginName)
+		} else {
+			// Use the eamil address as the associate user's account name.
+			result = append(result, sale.AssocEmail)
 		}
 	}
 
@@ -1684,9 +1944,9 @@ func GetMembershipYear(now time.Time) int {
 	// Take the current date and figure out which year we are
 	// selling.
 
-	timeZone := now.Local().Location()
+	timezone := now.Location()
 	currentYear := now.Year()
-	startOfSellingYear := time.Date(currentYear, time.October, 1, 0, 0, 0, 0, timeZone)
+	startOfSellingYear := time.Date(currentYear, time.October, 1, 0, 0, 0, 0, timezone)
 	var sellingYear int
 	if now.Before(startOfSellingYear) {
 		sellingYear = now.Year()
@@ -1957,66 +2217,59 @@ func (db *Database) SetMemberEndDate(userID int64, year int) error {
 }
 
 // GetUserDataFieldIDByNameIntern gets the row from adm_user_fields with
-// the given internal name.  The database object contains a cache of
-// these values, so the database lookup is only done once.
+// the given internal name.
 // It's assumed that a transaction is already set up in the db object.
 func (db *Database) GetUserDataFieldIDByNameIntern(nameIntern string) (int64, error) {
 
 	f := "GetUserDataFieldIDByNameIntern: "
 
-	uf, ok := db.UserField[nameIntern]
-
-	if ok && uf.ID > 0 {
-		// The cache entry's ID is already set - return it.
-		return uf.ID, nil
-	}
-
-	// The cache entry's ID is not set yet.  Fetch the row.
 	const q = `
-		SELECT usf_id, usf_name, usf_name_intern, usf_type, 
-		usf_usr_id_create, usf_cat_id
+		SELECT usf_id
 		FROM adm_user_fields
 		WHERE usf_name_intern = $1
 	`
-
-	var userID, catID int64
-	var fd FieldData
-	scanError := db.QueryRow(q, nameIntern).
-		Scan(&fd.ID, &fd.Name, &fd.NameIntern, &fd.Type, &userID, &catID)
-	if scanError != nil && scanError != sql.ErrNoRows {
-		return 0, errors.New(f + scanError.Error())
+	var fieldID int64
+	err := db.QueryRow(q, nameIntern).Scan(&fieldID)
+	if err != nil {
+		em := fmt.Sprintf("%s: %v - %s", f, err, nameIntern)
+		return 0, errors.New(em)
 	}
 
-	if scanError == sql.ErrNoRows {
-		// The field is not listed in adm_user_fields.
-		return 0, errors.New(f + "user field " + nameIntern + " not in adm_user_fields")
-	}
-
-	var e1 error
-	fd.CreateUser, e1 = db.GetUser(userID)
-	if e1 != nil {
-		return 0, errors.New(f + e1.Error())
-	}
-
-	var e2 error
-	fd.Cat, e2 = db.GetCategory(catID)
-	if e2 != nil {
-		return 0, errors.New(f + e2.Error())
-	}
-
-	// Update the cache.
-	db.UserField[nameIntern] = &fd
-
-	// Return the cached ID.
-	return fd.ID, nil
+	return fieldID, nil
 }
 
 // GetUserDataField gets the value of type T from the adm_user_data row with the given
-// field ID and belonging to the given user.
+// field ID and belonging to the given user.  If there is no row found it returns the
+// zero value of the return type (an empty string, a zero or false).  (To detect no row,
+// use GetUserDataFieldErrorOnNotFound().)
 // It's assumed that a transaction is already set up in the db object.
 func GetUserDataField[T int | float64 | bool | string](db *Database, fieldID, userID int64) (T, error) {
 
-	f := "getUserDataField"
+	var result T
+	var zero T // The zero value of the type T.
+	var err error
+	result, err = GetUserDataFieldErrorOnNotFound[T](db, fieldID, userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			// The query worked but found no rows.  This is correct behaviour.
+			// Return the zero value of the type.
+			return zero, nil
+		}
+		em := fmt.Sprintf("GetUserDataField: %v - %d %d", err, fieldID, userID)
+		return zero, errors.New(em)
+	}
+
+	// Found a record.
+	return result, nil
+}
+
+// GetUserDataFieldErrorOnNotFound gets the value of type T from the adm_user_data row with
+//
+//	given field ID and belonging to the given user.  If there is no row, it returns an
+//
+// sql.ErrNoRows error.
+// It's assumed that a transaction is already set up in the db object.
+func GetUserDataFieldErrorOnNotFound[T int | float64 | bool | string](db *Database, fieldID, userID int64) (T, error) {
 
 	const q = `
 		SELECT usd_value
@@ -2024,17 +2277,458 @@ func GetUserDataField[T int | float64 | bool | string](db *Database, fieldID, us
 		WHERE usd_usr_id = $1
 		AND usd_usf_id = $2;
 	`
-
+	var zero T
 	var result T
 	queryError := db.QueryRow(q, userID, fieldID).Scan(&result)
 	if queryError != nil {
-		em := fmt.Sprintf("%s: %v", f, queryError)
 		// Return the zero value and the error.
-		return result, errors.New(em)
+		return zero, queryError
 	}
 
 	// Found a record.
 	return result, nil
+}
+
+// SetDataProtectionField sets the DATA_PROTECTION_PERMISSION field for the user in
+// adm_user_data.  In the DB, tick box fields are set to 0 or 1.
+func (db *Database) SetDataProtectionField(userID int64, ticked bool) error {
+
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern(DataStoragePermNameIntern)
+	if fieldError != nil {
+		return fieldError
+	}
+	// If the member consents to giftaid, fill in the box.  In case
+	// it's already set from last year but not this year, ensure that
+	// the value in the DB record is reset.
+	if ticked {
+		return SetUserDataField(db, fieldID, userID, 1)
+	} else {
+		return SetUserDataField(db, fieldID, userID, 0)
+	}
+}
+
+// GetDataProtectionField gets the DATA_PROTECTION_PERMISSION field for the user from
+// adm_user_data.  In the DB, Tick box fields are set to 0 or 1.
+func (db *Database) GetDataProtectionField(userID int64) (bool, error) {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern(DataStoragePermNameIntern)
+	if fieldError != nil {
+		em := fmt.Sprintf("GetDataProtectionField: %v", fieldError)
+		return false, errors.New(em)
+	}
+
+	var fetchedValue int
+	fetchedValue, fetchError := GetUserDataField[int](db, fieldID, userID)
+	if fetchError != nil {
+		return false, fetchError
+	}
+
+	// 0 is false, any other value is true
+	if fetchedValue == 0 {
+		return false, nil
+	} else {
+		return true, nil
+	}
+}
+
+// SetReceiveEmailField sets the notices by email field for the user in
+// adm_user_data.  In the DB, tick box fields are set to 0 or 1.
+func (db *Database) SetReceiveEmailField(userID int64, ticked bool) error {
+
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("NOTICES_BY_EMAIL")
+	if fieldError != nil {
+		return fieldError
+	}
+	// If the member consents to giftaid, fill in the box.  In case
+	// it's already set from last year but not this year, ensure that
+	// the value in the DB record is reset.
+	if ticked {
+		return SetUserDataField(db, fieldID, userID, 1)
+	} else {
+		return SetUserDataField(db, fieldID, userID, 0)
+	}
+}
+
+// GetNoticesByEmailField gets the notices by email field for the user from
+// adm_user_data.  In the DB, Tick box fields are set to 0 or 1.
+func (db *Database) GetReceiveEmailField(userID int64) (bool, error) {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("NOTICES_BY_EMAIL")
+	if fieldError != nil {
+		em := fmt.Sprintf("GetReceiveEmailField: %v", fieldError)
+		return false, errors.New(em)
+	}
+
+	var fetchedValue int
+	fetchedValue, fetchError := GetUserDataField[int](db, fieldID, userID)
+	if fetchError != nil {
+		return false, fetchError
+	}
+
+	// 0 is false, any other value is true
+	if fetchedValue == 0 {
+		return false, nil
+	} else {
+		return true, nil
+	}
+}
+
+// SetTitle sets the user's title.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) SetTitle(userID int64, val string) error {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("SALUTATION")
+	if fieldError != nil {
+		return fieldError
+	}
+
+	return SetUserDataField(db, fieldID, userID, val)
+}
+
+// GetTitle gets the user's title.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) GetTitle(userID int64) (string, error) {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("SALUTATION")
+	if fieldError != nil {
+		return "", fieldError
+	}
+
+	return GetUserDataField[string](db, fieldID, userID)
+}
+
+// SetFirstName sets the user's last name.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) SetFirstName(userID int64, val string) error {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("FIRST_NAME")
+	if fieldError != nil {
+		return fieldError
+	}
+
+	return SetUserDataField(db, fieldID, userID, val)
+}
+
+// GetFirstName gets the user's last name.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) GetFirstName(userID int64) (string, error) {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("FIRST_NAME")
+	if fieldError != nil {
+		return "", fieldError
+	}
+
+	return GetUserDataField[string](db, fieldID, userID)
+}
+
+// SetLastName sets the user's first name.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) SetLastName(userID int64, val string) error {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("LAST_NAME")
+	if fieldError != nil {
+		return fieldError
+	}
+
+	return SetUserDataField(db, fieldID, userID, val)
+}
+
+// GetLastName gets the user's last name.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) GetLastName(userID int64) (string, error) {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("LAST_NAME")
+	if fieldError != nil {
+		return "", fieldError
+	}
+
+	return GetUserDataField[string](db, fieldID, userID)
+}
+
+// SetEmail sets the user's email address in adm_user_data.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) SetEmail(userID int64, val string) error {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("EMAIL")
+	if fieldError != nil {
+		return fieldError
+	}
+
+	return SetUserDataField(db, fieldID, userID, val)
+}
+
+// GetEmail gets the user's Email address from adm_user_data.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) GetEmail(userID int64) (string, error) {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("EMAIL")
+	if fieldError != nil {
+		return "", fieldError
+	}
+
+	return GetUserDataField[string](db, fieldID, userID)
+}
+
+// SetAddressline1 sets the first line of the user's address.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) SetAddressLine1(userID int64, val string) error {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("STREET")
+	if fieldError != nil {
+		return fieldError
+	}
+
+	return SetUserDataField(db, fieldID, userID, val)
+}
+
+// GetAddressline1 gets the first line of the user's address.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) GetAddressLine1(userID int64) (string, error) {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("STREET")
+	if fieldError != nil {
+		return "", fieldError
+	}
+
+	return GetUserDataField[string](db, fieldID, userID)
+}
+
+// SetAddressLine2 sets the second line of the user's address.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) SetAddressLine2(userID int64, val string) error {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("ADDRESS_LINE_2")
+	if fieldError != nil {
+		return fieldError
+	}
+
+	return SetUserDataField(db, fieldID, userID, val)
+}
+
+// GetAddressline2 gets the second line of the user's address.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) GetAddressLine2(userID int64) (string, error) {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("ADDRESS_LINE_2")
+	if fieldError != nil {
+		return "", fieldError
+	}
+
+	return GetUserDataField[string](db, fieldID, userID)
+}
+
+// SetAddressLine3 sets the third line of the user's address.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) SetAddressLine3(userID int64, val string) error {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("ADDRESS_LINE_3")
+	if fieldError != nil {
+		return fieldError
+	}
+
+	return SetUserDataField(db, fieldID, userID, val)
+}
+
+// GetAddressline3 gets the third line of the user's address.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) GetAddressLine3(userID int64) (string, error) {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("ADDRESS_LINE_3")
+	if fieldError != nil {
+		return "", fieldError
+	}
+
+	return GetUserDataField[string](db, fieldID, userID)
+}
+
+// SetTown sets the town in the user's address.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) SetTown(userID int64, val string) error {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("CITY")
+	if fieldError != nil {
+		return fieldError
+	}
+
+	return SetUserDataField(db, fieldID, userID, val)
+}
+
+// GetTown gets the second line of the user's address.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) GetTown(userID int64) (string, error) {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("CITY")
+	if fieldError != nil {
+		return "", fieldError
+	}
+
+	return GetUserDataField[string](db, fieldID, userID)
+}
+
+// SetCounty sets the county in the user's address.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) SetCounty(userID int64, val string) error {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("COUNTY")
+	if fieldError != nil {
+		return fieldError
+	}
+
+	return SetUserDataField(db, fieldID, userID, val)
+}
+
+// GetCounty gets the second line of the user's address.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) GetCounty(userID int64) (string, error) {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("COUNTY")
+	if fieldError != nil {
+		return "", fieldError
+	}
+
+	return GetUserDataField[string](db, fieldID, userID)
+}
+
+// SetPostcode sets the postcode in the user's address.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) SetPostcode(userID int64, val string) error {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("POSTCODE")
+	if fieldError != nil {
+		return fieldError
+	}
+
+	return SetUserDataField(db, fieldID, userID, val)
+}
+
+// GetPostcode gets the postcode in the user's address.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) GetPostcode(userID int64) (string, error) {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("POSTCODE")
+	if fieldError != nil {
+		return "", fieldError
+	}
+
+	v, e := GetUserDataField[string](db, fieldID, userID)
+	if e != nil {
+		return "", e
+	}
+
+	return v, nil
+}
+
+// SetCountryCode sets the country in the user's address.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) SetCountryCode(userID int64, val string) error {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("COUNTRY")
+	if fieldError != nil {
+		return fieldError
+	}
+
+	return SetUserDataField(db, fieldID, userID, val)
+}
+
+// GetCountryCode gets the country in the user's address.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) GetCountryCode(userID int64) (string, error) {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("COUNTRY")
+	if fieldError != nil {
+		return "", fieldError
+	}
+
+	v, e := GetUserDataField[string](db, fieldID, userID)
+	if e != nil {
+		return "", e
+	}
+
+	return v, nil
+}
+
+// SetCountry sets the country in the user's address.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) SetCountry(userID int64, val string) error {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("COUNTRY")
+	if fieldError != nil {
+		return fieldError
+	}
+
+	return SetUserDataField(db, fieldID, userID, val)
+}
+
+// GetCountry gets the country in the user's address.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) GetCountry(userID int64) (string, error) {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("COUNTRY")
+	if fieldError != nil {
+		return "", fieldError
+	}
+
+	v, e := GetUserDataField[string](db, fieldID, userID)
+	if e != nil {
+		return "", e
+	}
+
+	return v, nil
+}
+
+// SetPhone sets the user's landline phone number in their profile.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) SetPhone(userID int64, val string) error {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("PHONE")
+	if fieldError != nil {
+		return fieldError
+	}
+
+	return SetUserDataField(db, fieldID, userID, val)
+}
+
+// GetPhone gets the landline phone number from the user's recvords.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) GetPhone(userID int64) (string, error) {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("PHONE")
+	if fieldError != nil {
+		return "", fieldError
+	}
+
+	v, e := GetUserDataField[string](db, fieldID, userID)
+	if e != nil {
+		return "", e
+	}
+
+	return v, nil
+}
+
+// SetMobile sets the user's mobile phone number in their profile.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) SetMobile(userID int64, val string) error {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("MOBILE")
+	if fieldError != nil {
+		return fieldError
+	}
+
+	return SetUserDataField(db, fieldID, userID, val)
+}
+
+// GetMobile gets the mobile phone number from the user's profile.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) GetMobile(userID int64) (string, error) {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("MOBILE")
+	if fieldError != nil {
+		return "", fieldError
+	}
+
+	v, e := GetUserDataField[string](db, fieldID, userID)
+	if e != nil {
+		return "", e
+	}
+
+	return v, nil
+}
+
+// SetLocationOfInterest sets the user's location of interest (parish) in their profile.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) SetLocationOfInterest(userID int64, val string) error {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("LOCATION_OF_INTEREST")
+	if fieldError != nil {
+		return fieldError
+	}
+
+	return SetUserDataField(db, fieldID, userID, val)
+}
+
+// GetLocationOfInterest gets the mobile phone number from the user's profile.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) GetLocationOfInterest(userID int64) (string, error) {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("LOCATION_OF_INTEREST")
+	if fieldError != nil {
+		return "", fieldError
+	}
+
+	v, e := GetUserDataField[string](db, fieldID, userID)
+	if e != nil {
+		return "", e
+	}
+
+	return v, nil
 }
 
 // SetLastPayment sets the date of last payment field in adm_user_data.
@@ -2059,7 +2753,24 @@ func (db *Database) SetDonationToSociety(userID int64, payment float64) error {
 	return SetUserDataField(db, fieldID, userID, payment)
 }
 
-// SetDonationToMuseum sets the donation to the musum.
+// GetDonationToSociety gets the donation to society from the user's profile.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) GetDonationToSociety(userID int64) (float64, error) {
+
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("VALUE_OF_DONATION_TO_LDLHS")
+	if fieldError != nil {
+		return 0.0, fieldError
+	}
+
+	v, e := GetUserDataField[float64](db, fieldID, userID)
+	if e != nil {
+		return 0.0, e
+	}
+
+	return v, nil
+}
+
+// SetDonationToMuseum sets the donation to the museum.
 // It's assumed that a transaction is already set up in the db object.
 func (db *Database) SetDonationToMuseum(userID int64, payment float64) error {
 	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("VALUE_OF_DONATION_TO_THE_MUSEUM")
@@ -2068,6 +2779,23 @@ func (db *Database) SetDonationToMuseum(userID int64, payment float64) error {
 	}
 
 	return SetUserDataField(db, fieldID, userID, payment)
+}
+
+// GetDonationToMuseum gets the donation to museum from the user's profile.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) GetDonationToMuseum(userID int64) (float64, error) {
+
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("VALUE_OF_DONATION_TO_THE_MUSEUM")
+	if fieldError != nil {
+		return 0.0, fieldError
+	}
+
+	v, e := GetUserDataField[float64](db, fieldID, userID)
+	if e != nil {
+		return 0.0, e
+	}
+
+	return v, nil
 }
 
 // SetDateLastPaid sets the date last paid field in adm_user_data.
@@ -2080,6 +2808,28 @@ func (db *Database) SetDateLastPaid(userID int64, d time.Time) error {
 	}
 
 	return db.SetDateFieldInUserData(fieldID, userID, d)
+}
+
+// GetDateLastPaid gets the date last paid from the user's profile.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) GetDateLastPaid(userID int64) (string, error) {
+	// This is only used for testing.  The date string is not converted
+	// to a date object.  If you want to do that, note that Postgres
+	// and SQLite store them differently:
+	// postgres: "2025-12-31T00:00:00Z"
+	// SQLite: "2025-12-31 23:59:59 999999 +00"
+
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("DATE_LAST_PAID")
+	if fieldError != nil {
+		return "", fieldError
+	}
+
+	v, e := GetUserDataField[string](db, fieldID, userID)
+	if e != nil {
+		return "", e
+	}
+
+	return v, nil
 }
 
 // SetFriendField sets the friend of the museum field for the user in
@@ -2098,9 +2848,9 @@ func (db *Database) SetFriendField(userID int64, ticked bool) error {
 
 }
 
-// SetGiftaidField sets the giftaid field for the user in
+// SetGiftaid sets the giftaid field for the user in
 // adm_user_data.  In the DB, tick box fields are set to 0 or 1.
-func (db *Database) SetGiftaidField(userID int64, ticked bool) error {
+func (db *Database) SetGiftaid(userID int64, ticked bool) error {
 
 	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("GIFT_AID")
 	if fieldError != nil {
@@ -2116,12 +2866,12 @@ func (db *Database) SetGiftaidField(userID int64, ticked bool) error {
 	}
 }
 
-// GetGiftaidField gets the giftaid field for the user from
+// GetGiftaid gets the giftaid field for the user from
 // adm_user_data.  In the DB, Tick box fields are set to 0 or 1.
-func (db *Database) GetGiftaidField(userID int64) (bool, error) {
+func (db *Database) GetGiftaid(userID int64) (bool, error) {
 	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("GIFT_AID")
 	if fieldError != nil {
-		em := fmt.Sprintf("GetGiftaidField: %v", fieldError)
+		em := fmt.Sprintf("GetGiftaid: %v", fieldError)
 		return false, errors.New(em)
 	}
 
@@ -2149,6 +2899,22 @@ func (db *Database) SetMembersAtAddress(userID int64, members int) error {
 	return SetUserDataField(db, fieldID, userID, members)
 }
 
+// GetMembersAtAddress gets the number of members at address from the user's profile.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) GetMembersAtAddress(userID int64) (int, error) {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("MEMBERS_AT_ADDRESS")
+	if fieldError != nil {
+		return 0, fieldError
+	}
+
+	v, e := GetUserDataField[int](db, fieldID, userID)
+	if e != nil {
+		return 0, e
+	}
+
+	return v, nil
+}
+
 // SetFriendsAtAddress sets the number of friends of the museum at the
 // user's address in adm_user_data.
 func (db *Database) SetFriendsAtAddress(userID int64, members int) error {
@@ -2160,14 +2926,30 @@ func (db *Database) SetFriendsAtAddress(userID int64, members int) error {
 	return SetUserDataField(db, fieldID, userID, members)
 }
 
-// SetUserDataStringField sets the field with ID fieldID in adm_user_data
-// for the given user to a string value.  If a record for the field is
+// GetFriendsAtAddress gets the number of friends at the user's address.
+// It's assumed that a transaction is already set up in the db object.
+func (db *Database) GetFriendsAtAddress(userID int64) (int, error) {
+	fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("NUMBER_OF_FRIENDS_OF_THE_MUSEUM_AT_THIS_ADDRESS")
+	if fieldError != nil {
+		return 0, fieldError
+	}
+
+	v, e := GetUserDataField[int](db, fieldID, userID)
+	if e != nil {
+		return 0, e
+	}
+
+	return v, nil
+}
+
+// SetUserDataField sets the field with ID fieldID in adm_user_data
+// for the given user to the given value.  If a record for the field is
 // missing, one is created.
 func SetUserDataField[T int | float64 | bool | string](db *Database, fieldID, userID int64, val T) error {
 
-	f := "SetUserDataField"
+	fn := "SetUserDataField"
 
-	var q string
+	var query string
 	var err error
 	var returnedID int64
 
@@ -2189,12 +2971,12 @@ func SetUserDataField[T int | float64 | bool | string](db *Database, fieldID, us
 
 		switch db.Config.Type {
 		case "postgres":
-			q = postgresSQL
+			query = postgresSQL
 		default:
-			q = sqliteSQL
+			query = sqliteSQL
 		}
 
-		returnedID, err = db.CreateRow(q, val, userID, fieldID)
+		returnedID, err = db.CreateRow(query, val, userID, fieldID)
 
 	} else {
 
@@ -2212,12 +2994,12 @@ func SetUserDataField[T int | float64 | bool | string](db *Database, fieldID, us
 
 		switch db.Config.Type {
 		case "postgres":
-			q = postgresSQL
+			query = postgresSQL
 		default:
-			q = sqliteSQL
+			query = sqliteSQL
 		}
 
-		returnedID, err = db.CreateRow(q, userID, fieldID, val)
+		returnedID, err = db.CreateRow(query, userID, fieldID, val)
 	}
 
 	if err != nil {
@@ -2225,7 +3007,7 @@ func SetUserDataField[T int | float64 | bool | string](db *Database, fieldID, us
 	}
 
 	if returnedID == 0 {
-		em := fmt.Sprintf("%s: zero return updating ID %d", f, returnedID)
+		em := fmt.Sprintf("%s: zero return updating ID %d", fn, returnedID)
 		return errors.New(em)
 	}
 
@@ -2456,6 +3238,261 @@ func (db *Database) MemberExists(username, emailAddress string) (bool, error) {
 	return true, nil
 }
 
+// GetExtraDetails gets the given user's extra details (address, phone number etc)
+// and fills in the appropriate fields of the given membership sale record.
+// The function assumes that a transaction has been set up.
+func (db *Database) GetExtraDetails(ms *MembershipSale) error {
+
+	if ms.UserID <= 0 {
+		return errors.New("GetExtraDetails.Save: no userID")
+	}
+
+	a1, a1e := db.GetAddressLine1(ms.UserID)
+	if a1e != nil {
+		return a1e
+	}
+
+	a2, a2e := db.GetAddressLine2(ms.UserID)
+	if a2e != nil {
+		return a2e
+	}
+
+	a3, a3e := db.GetAddressLine3(ms.UserID)
+	if a3e != nil {
+		return a3e
+	}
+
+	t, te := db.GetTown(ms.UserID)
+	if te != nil {
+		return te
+	}
+
+	c, ce := db.GetCounty(ms.UserID)
+	if ce != nil {
+		return ce
+	}
+
+	pc, pce := db.GetPostcode(ms.UserID)
+	if pce != nil {
+		return pce
+	}
+
+	ct, cte := db.GetCountry(ms.UserID)
+	if cte != nil {
+		return cte
+	}
+
+	p, pe := db.GetPhone(ms.UserID)
+	if pe != nil {
+		return pe
+	}
+
+	mob, me := db.GetMobile(ms.UserID)
+	if me != nil {
+		return me
+	}
+
+	loi, loie := db.GetLocationOfInterest(ms.UserID)
+	if loie != nil {
+		return loie
+	}
+
+	mi, mie := db.GetMembersInterests(ms.UserID)
+	if mie != nil {
+		return mie
+	}
+
+	moi, moie := db.GetMembersOtherInterests(ms.UserID)
+	if moie != nil {
+		return moie
+	}
+	ms.AddressLine1 = a1
+	ms.AddressLine2 = a2
+	ms.AddressLine3 = a3
+	ms.Town = t
+	ms.County = c
+	ms.Postcode = pc
+	ms.Country = ct
+	ms.Phone = p
+	ms.Mobile = mob
+	ms.LocationOfInterest = loi
+	if ms.TopicsOfInterest == nil {
+		ms.TopicsOfInterest = make(map[int64]interface{})
+	}
+	for _, nt := range mi {
+		ms.TopicsOfInterest[nt.InterestID] = nil
+	}
+	ms.OtherTopicsOfInterest = moi.Interests
+
+	return nil
+}
+
+// SaveExtraDetails saves the given user's extra details - address, phone number etc.
+// The function assumes that a transaction has been set up.
+func (db *Database) SaveExtraDetails(ms *MembershipSale) error {
+
+	if ms.UserID <= 0 {
+		return errors.New("saveExtraDetails.Save: no userID")
+	}
+
+	if len(ms.AddressLine1) > 0 {
+		err := db.SetAddressLine1(ms.UserID, ms.AddressLine1)
+		if err != nil {
+			return err
+		}
+	}
+
+	if len(ms.AddressLine2) > 0 {
+		err := db.SetAddressLine2(ms.UserID, ms.AddressLine2)
+		if err != nil {
+			return err
+		}
+	}
+
+	if len(ms.AddressLine3) > 0 {
+		err := db.SetAddressLine3(ms.UserID, ms.AddressLine3)
+		if err != nil {
+			return err
+		}
+	}
+
+	if len(ms.Town) > 0 {
+		err := db.SetTown(ms.UserID, ms.Town)
+		if err != nil {
+			return err
+		}
+	}
+
+	if len(ms.County) > 0 {
+		err := db.SetCounty(ms.UserID, ms.County)
+		if err != nil {
+			return err
+		}
+	}
+
+	if len(ms.Postcode) > 0 {
+		err := db.SetPostcode(ms.UserID, ms.Postcode)
+		if err != nil {
+			return err
+		}
+	}
+
+	if len(ms.CountryCode) > 0 {
+		err := db.SetCountryCode(ms.UserID, ms.CountryCode)
+		if err != nil {
+			return err
+		}
+	}
+
+	if len(ms.Phone) > 0 {
+		err := db.SetPhone(ms.UserID, ms.Phone)
+		if err != nil {
+			return err
+		}
+	}
+
+	if len(ms.Mobile) > 0 {
+		err := db.SetMobile(ms.UserID, ms.Mobile)
+		if err != nil {
+			return err
+		}
+	}
+
+	if len(ms.LocationOfInterest) > 0 {
+		err := db.SetLocationOfInterest(ms.UserID, ms.LocationOfInterest)
+		if err != nil {
+			return err
+		}
+	}
+
+	if len(ms.TopicsOfInterest) > 0 {
+		for interestID := range ms.TopicsOfInterest {
+			mi := NewMembersInterest(ms.UserID, interestID)
+			err := db.CreateMembersInterest(mi)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	if len(ms.OtherTopicsOfInterest) > 0 {
+		moi := NewMembersOtherInterests(ms.UserID, ms.OtherTopicsOfInterest)
+		err := db.CreateMembersOtherInterests(moi)
+		if err != nil {
+			return err
+		}
+	}
+
+	if ms.AssocUserID > 0 {
+		// There is an assocate user.  Set the same address and landline number.
+		if len(ms.AddressLine1) > 0 {
+			err := db.SetAddressLine1(ms.AssocUserID, ms.AddressLine1)
+			if err != nil {
+				return err
+			}
+		}
+
+		if len(ms.AddressLine2) > 0 {
+			err := db.SetAddressLine2(ms.AssocUserID, ms.AddressLine2)
+			if err != nil {
+				return err
+			}
+		}
+
+		if len(ms.AddressLine3) > 0 {
+			err := db.SetAddressLine3(ms.AssocUserID, ms.AddressLine3)
+			if err != nil {
+				return err
+			}
+		}
+
+		if len(ms.Town) > 0 {
+			err := db.SetTown(ms.AssocUserID, ms.Town)
+			if err != nil {
+				return err
+			}
+		}
+
+		if len(ms.County) > 0 {
+			err := db.SetCounty(ms.AssocUserID, ms.County)
+			if err != nil {
+				return err
+			}
+		}
+
+		if len(ms.Postcode) > 0 {
+			err := db.SetPostcode(ms.AssocUserID, ms.Postcode)
+			if err != nil {
+				return err
+			}
+		}
+
+		if len(ms.CountryCode) > 0 {
+			err := db.SetCountryCode(ms.AssocUserID, ms.CountryCode)
+			if err != nil {
+				return err
+			}
+		}
+
+		if len(ms.Phone) > 0 {
+			err := db.SetPhone(ms.AssocUserID, ms.Phone)
+			if err != nil {
+				return err
+			}
+		}
+
+		// The extra details form may have specified the associate user's mobile number.
+		if len(ms.AssocMobile) > 0 {
+			err := db.SetMobile(ms.AssocUserID, ms.AssocMobile)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
 const NoUserNameError = "getUserName: no text supplied"
 
 // GetUserName constructs the user name.  Any upper case is converted to lower
@@ -2504,9 +3541,9 @@ func GetUserName(email, firstname, lastname string) (string, error) {
 	}
 }
 
-// CreateUuid creates and returns a UUID which is unique
-// in the given row of the given table.
-// "mem_uuid", "adm_members"
+// CreateUuid creates and returns a UUID which is unique in the given row of the given table.
+// The technque uses a random source which makes a duplicate extremely unlikely. although
+// possible.
 func CreateUuid(tx *sql.Tx, field, table string) (string, error) {
 
 	// Do this up to ten times until you get a UUID that's not already
@@ -2514,20 +3551,23 @@ func CreateUuid(tx *sql.Tx, field, table string) (string, error) {
 	for i := 0; i < 10; i++ {
 
 		// Create a UUID.
-		uid := uuid.New().String()
+		uid, randError := uuid.NewRandom()
+		if randError != nil {
+			return "", randError
+		}
 
 		// Check that the UUID is not already in the table.
 		// (This is theoretically possible but unlikely.)
 		q := fmt.Sprintf("select %s from %s where %s = $1;",
 			field, table, field)
 
-		resultSet, err := tx.Query(q, uid)
+		resultSet, err := tx.Query(q, uid.String())
 		if err != nil {
 			// If there is no match under Postgres, this may return the error
 			// "no rows in result set".
 			if err == sql.ErrNoRows {
 				// Success!
-				return uid, nil
+				return uid.String(), nil
 			}
 			// If this happens under SQLite, it's a genuine error.
 			em := fmt.Sprintf("createUuid: %s %s %s", field, table, err.Error())
@@ -2537,7 +3577,7 @@ func CreateUuid(tx *sql.Tx, field, table string) (string, error) {
 		// Under Postgres the ResultSet may be nil if there are no matching entries.
 		if resultSet == nil {
 			// Success!
-			return uid, nil
+			return uid.String(), nil
 		}
 
 		// We are only interested in any error.  Leaving the result set open can cause
@@ -2558,7 +3598,7 @@ func CreateUuid(tx *sql.Tx, field, table string) (string, error) {
 
 		if !resultSet.Next() {
 			// Success!
-			return uid, nil
+			return uid.String(), nil
 		}
 
 		var fetchedUUID string

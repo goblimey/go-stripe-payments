@@ -197,8 +197,15 @@ insert into adm_user_fields
 values('total', 'Total value of last payment', 'VALUE_OF_LAST_PAYMENT', 'DECIMAL', 38, 
 (select cat_id from adm_categories where cat_name='BASIC_DATA'), 
 (select usr_id from adm_users where usr_login_name='System'));
+
 insert into adm_user_fields
 (usf_uuid, usf_name, usf_name_intern, usf_type, usf_sequence, usf_cat_id, usf_usr_id_create)
-values('dpperm', 'data protection permission', 'DATA_PROTECTION_PERMISSION', 'checkbox', 39, 
+values('loi', 'Location of Interest', 'LOCATION_OF_INTEREST', 'checkbox', 39, 
+(select cat_id from adm_categories where cat_name='BASIC_DATA'), 
+(select usr_id from adm_users where usr_login_name='System'));
+
+insert into adm_user_fields
+(usf_uuid, usf_name, usf_name_intern, usf_type, usf_sequence, usf_cat_id, usf_usr_id_create)
+values('dpperm', 'data protection permission', 'DATA_PROTECTION_PERMISSION', 'checkbox', 40, 
 (select cat_id from adm_categories where cat_name='BASIC_DATA'), 
 (select usr_id from adm_users where usr_login_name='System'));

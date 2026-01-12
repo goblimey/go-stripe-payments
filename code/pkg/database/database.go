@@ -160,6 +160,41 @@ type Member struct {
 	Approved  int    `json:"mem_approved"`
 }
 
+// Interest holds a value from the adm_member_interest table.
+type Interest struct {
+	ID   int64  `json:"mtrst_id"`
+	Name string `json:"ntrst_name"`
+}
+
+// MembersInterest holds a value from the adm_members_interests table.  The adm_interests
+// table defines the list of interests that we have decided a member might have. (For a
+// history society, archaeology, for example.)  The adm_members_interest table links users
+// to pre-defined interests - one user to many interests.
+type MembersInterest struct {
+	ID         int64 `json:"mi_id"`          // The ID of the database row.
+	UserID     int64 `json:"mi_usr_id"`      // The user who has expressed the interest.
+	InterestID int64 `json:"mi_interest_id"` // The ID of the row of the interest in adm_interests.
+}
+
+func NewMembersInterest(userID, interestID int64) *MembersInterest {
+	mi := MembersInterest{UserID: userID, InterestID: interestID}
+	return &mi
+}
+
+// MembersOtherInterests holds a value from the adm_members_other_interest table which
+// contain interests that aren't in adm_interests and which the member enters manually.
+type MembersOtherInterests struct {
+	ID        int64  `json:"moi_id"`        // the ID of the database row.
+	UserID    int64  `json:"moi_usr_id"`    // The user who has expressed the interest.
+	Interests string `json:"moi_interests"` // One or more interests.
+}
+
+// NewMembersOtherInterests holds a value from the adm_members_other_interests table.
+func NewMembersOtherInterests(userID int64, interests string) *MembersOtherInterests {
+	omi := MembersOtherInterests{UserID: userID, Interests: interests}
+	return &omi
+}
+
 // MembershipSale represents the payment of a membership sale - the annual
 // membership fee.
 type MembershipSale struct {
@@ -169,23 +204,27 @@ type MembershipSale struct {
 	PaymentID             string  // The transaction Id from the payment processor.
 	TransactionType       string  // The transaction type, eg 'membership renewal'
 	MembershipYear        int     // The membership year paid for.
-	UserID                int64   // The user ID of the member
+	Title                 string  // The ordinary member's title (Mr, Mrs, Dr etc).
+	FirstName             string  // The ordinary member's first name.
+	LastName              string  // The ordinary member's last name.
+	Email                 string  // The ordinary member's email address.
+	AccountName           string  // The ordinary member's Admidio account name.
+	UserID                int64   // The user ID of the ordinary member.
 	OrdinaryMemberFeePaid float64 // The fee paid for ordinary membership.
 	Friend                bool    // True if the ordinary member is a friend of the museum.
 	FriendFeePaid         float64 // The fee paid for the ordinary member to be a friend.
-	FirstName             string  // First name (for new members)
-	LastName              string  // Last name (for new members)
-	Email                 string  // Email address (for new members)
 	DonationToSociety     float64 // donation to the society.
 	DonationToMuseum      float64 // donation to the museum.
-	Giftaid               bool    // True if the member consents to Giftaid.
+	Giftaid               bool    // True if the ordinary member consents to Giftaid.
+	AssocTitle            string  // The associate member's title (Mr, Mrs, Dr etc).
+	AssocFirstName        string  // The associate member's first name.
+	AssocLastName         string  // The associate member's last name
+	AssocEmail            string  // The associate member's email address.
+	AssocAccountName      string  // The name of the associate member's Admidio account.
 	AssocUserID           int64   // The user ID of the associate member.
-	AssocFeePaid          float64 // the fee paid for associate membership.
+	AssocFeePaid          float64 // The fee paid for associate membership.
 	AssocFriend           bool    // True if the associate member is a friend of the museum.
-	AssocFriendFeePaid    float64 // The fee paid for associate member to be a fiend.
-	AssocFirstName        string  // First name (for new members)
-	AssocLastName         string  // Last name (for new members)
-	AssocEmail            string  // Email address (for new members)
+	AssocFriendFeePaid    float64 // The fee paid for associate member to be a friend.
 
 	// Some HTML views are passed a sale object when the template is executed.  These
 	// fields are used only by those views.  They are not stored in the database, but
@@ -196,6 +235,35 @@ type MembershipSale struct {
 	EmailAddressForQuestions string // Emai address for questions (quoted in various pages)
 	EmailAddressForFailures  string // Email addess for Failures after (quoted in various pages)
 
+	// These fields are used after a successful sale to collect extra details
+	// (address etc). They are all optional.
+	AddressLine1               string                // Optional
+	AddressLine1Error          string                // Error message.
+	AddressLine2               string                // optional.
+	AddressLine2Error          string                // Error message.
+	AddressLine3               string                // optional
+	AddressLine3Error          string                // Error message.
+	Town                       string                // optional
+	TownError                  string                // Error message.
+	County                     string                // optional
+	CountyError                string                // Error message.
+	Postcode                   string                // optional
+	PostcodeError              string                // Error message.
+	CountryCode                string                // Three letter code, for example "GBR" - https://en.wikipedia.org/wiki/ISO_3166-1_alpha-3
+	CountryCodeError           string                // Error message.
+	Country                    string                // Country (from CountryCode)
+	CountryError               string                // Error message.
+	Phone                      string                // starts with '+' or '0'
+	PhoneError                 string                // Error message.
+	Mobile                     string                // starts with '+' or '0'
+	MobileError                string                // Error message.
+	LocationOfInterest         string                // One of the local parishes
+	LocationOfInterestError    string                // Error message.
+	TopicsOfInterest           map[int64]interface{} // Member's interests - the keys are string version of int64 IDs from adm_interests.
+	OtherTopicsOfInterest      string                // Topics not in the database, chosen by the member.
+	OtherTopicsOfInterestError string                // Error message.
+	AssocMobile                string                // Associate user's mobile number.
+	AssocMobileError           string                // Error mssage about the associate member's mobile number.
 }
 
 // NewMembershipSale creates a MembershipSale object.
@@ -251,7 +319,7 @@ func (ms *MembershipSale) TotalForDisplay() string {
 		return ""
 	}
 
-	return fmt.Sprintf("£%.2f", total)
+	return PriceForDisplay(total)
 }
 
 // OrdinaryMembershipFeeForDisplay gets the ordinary membership fee
@@ -262,7 +330,7 @@ func (ms *MembershipSale) OrdinaryMemberFeeForDisplay() string {
 		return ""
 	}
 
-	return fmt.Sprintf("£%.2f", ms.OrdinaryMemberFeePaid)
+	return PriceForDisplay(ms.OrdinaryMemberFeePaid)
 }
 
 // FriendFeeForDisplay gets the ordinary member's
@@ -274,7 +342,7 @@ func (ms *MembershipSale) FriendFeeForDisplay() string {
 		return ""
 	}
 
-	return fmt.Sprintf("£%.2f", ms.FriendFeePaid)
+	return PriceForDisplay(ms.FriendFeePaid)
 }
 
 // DonationToSocietyForDisplay gets the donation to the society
@@ -283,7 +351,7 @@ func (ms *MembershipSale) DonationToSocietyForDisplay() string {
 	if ms.DonationToSociety == 0 {
 		return ""
 	}
-	return fmt.Sprintf("£%.2f", ms.DonationToSociety)
+	return PriceForDisplay(ms.DonationToSociety)
 }
 
 // DonationToMuseumForDisplay gets the donation to museum
@@ -292,7 +360,7 @@ func (ms *MembershipSale) DonationToMuseumForDisplay() string {
 	if ms.DonationToMuseum == 0 {
 		return ""
 	}
-	return fmt.Sprintf("£%.2f", ms.DonationToMuseum)
+	return PriceForDisplay(ms.DonationToMuseum)
 }
 
 // AssociateMemberFeeForDisplay gets the associate membership fee
@@ -304,7 +372,7 @@ func (ms *MembershipSale) AssocFeeForDisplay() string {
 		return ""
 	}
 
-	return fmt.Sprintf("£%.2f", ms.AssocFeePaid)
+	return PriceForDisplay(ms.AssocFeePaid)
 }
 
 // AssociateMemberFriendFeeForDisplay gets the associate member's
@@ -321,7 +389,12 @@ func (ms *MembershipSale) AssocFriendFeeForDisplay() string {
 		return ""
 	}
 
-	return fmt.Sprintf("£%.2f", ms.AssocFriendFeePaid)
+	return PriceForDisplay(ms.AssocFriendFeePaid)
+}
+
+// PriceForDisplay takes a number and presents it as a price in UK Pounds "£dd.dd".
+func PriceForDisplay(f float64) string {
+	return fmt.Sprintf("£%.2f", f)
 }
 
 // FieldData holds the IDs of the fields in adm_user_fields.
@@ -337,12 +410,11 @@ type FieldData struct {
 }
 
 type Database struct {
-	Config        *DBConfig             // The database config.
-	Connection    *sql.DB               // The database connection.
-	Transaction   *sql.Tx               // The transaction.
-	SQLiteTempDir string                // The directory in /tmp used to store the SQLite DB.
-	UserField     map[string]*FieldData // A cache of adm_user_field entries.
-	Logger        *slog.Logger          // The structured daily logger
+	Config        *DBConfig    // The database config.
+	Connection    *sql.DB      // The database connection.
+	Transaction   *sql.Tx      // The transaction.
+	SQLiteTempDir string       // The directory in /tmp used to store the SQLite DB.
+	Logger        *slog.Logger // The structured daily logger
 }
 
 // New creates a database object using the given configuration.
@@ -390,8 +462,6 @@ func (db *Database) Connect() error {
 	default:
 		return errors.New("no database config")
 	}
-
-	db.UserField = make(map[string]*FieldData)
 
 	return nil
 }
@@ -609,12 +679,16 @@ func ConnectToPostgres(dbConfig *DBConfig) (*sql.DB, error) {
 	const driverName = "postgres"
 	conn, errConn := sql.Open(driverName, connectionStr)
 	if errConn != nil {
+		fmt.Printf("ConnectToPostgres: open - %v", errConn)
+		dbConfig.Logger.Error("ConnectToPostgres: open - " + errConn.Error())
 		return nil, errConn
 	}
 
 	// Ping actually opens the database connection.
 	errPing := conn.Ping()
 	if errPing != nil {
+		fmt.Printf("ConnectToPostgres: ping - %v", errPing)
+		dbConfig.Logger.Error("ConnectToPostgres: opepingn - " + errPing.Error())
 		return nil, errPing
 	}
 

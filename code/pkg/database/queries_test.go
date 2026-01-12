@@ -3,6 +3,8 @@ package database
 import (
 	"errors"
 	"fmt"
+	"math"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -462,6 +464,512 @@ func TestCreateAndDeleteMember(t *testing.T) {
 	}
 }
 
+// TestCreateMembersInterest checks CreateMembersInterest.
+func TestCreateMembersInterest(t *testing.T) {
+	for _, dbType := range databaseList {
+
+		db, connError := OpenDBForTesting(dbType)
+
+		if connError != nil {
+			t.Error(connError)
+			return
+		}
+
+		db.BeginTx()
+
+		defer db.Rollback()
+		defer db.CloseAndDelete()
+
+		prepError := PrepareTestTables(db)
+		if prepError != nil {
+			t.Errorf("%s: %v", dbType, prepError)
+			continue
+		}
+
+		user, cue := CreateUser(db)
+		if cue != nil {
+			t.Errorf("%s: %v", dbType, cue)
+			continue
+		}
+
+		mis, me := db.GetInterests()
+		if me != nil {
+			t.Errorf("%s: %v", dbType, me)
+		}
+
+		if len(mis) == 0 {
+			t.Errorf("%s: %s", dbType, "no interests")
+			continue
+		}
+
+		// we have at least one interest, which is enough for this test.
+
+		mi := NewMembersInterest(user.ID, mis[0].ID)
+		ce := db.CreateMembersInterest(mi)
+		if ce != nil {
+			t.Errorf("%s: %v", dbType, ce)
+			continue
+		}
+
+		fetchedInterests, fetchError := db.GetMembersInterests(user.ID)
+		if fetchError != nil {
+			t.Errorf("%s: %v", dbType, fetchError)
+			continue
+		}
+
+		// Expect just one interest, same as mi.
+		if len(fetchedInterests) != 1 {
+			t.Errorf("%s: want 1 interest got %d", dbType, len(fetchedInterests))
+		}
+
+		if fetchedInterests[0] != *mi {
+			t.Errorf("%s: want %v got %v", dbType, mi, fetchedInterests[0])
+		}
+	}
+
+}
+
+// TestGetMembersInterests checks GetMembersInterests.
+func TestGetMembersInterests(t *testing.T) {
+
+	for _, dbType := range databaseList {
+
+		db, connError := OpenDBForTesting(dbType)
+
+		if connError != nil {
+			t.Error(connError)
+			return
+		}
+
+		db.BeginTx()
+
+		defer db.Rollback()
+		defer db.CloseAndDelete()
+
+		prepError := PrepareTestTables(db)
+		if prepError != nil {
+			t.Error(prepError)
+		}
+
+		// The setup is long-winded.
+
+		//  Create a user.
+		loginName, e1 := CreateUuid(db.Transaction, "usr_login_name", "adm_users")
+		if e1 != nil {
+			t.Error(e1)
+			return
+		}
+		user := NewUser(loginName)
+		createUserError := db.CreateUser(user)
+		if createUserError != nil {
+			t.Errorf("%s: %v", dbType, createUserError)
+			return
+		}
+
+		// Get the ID of two interests - any will do.  (If there are not at
+		// least two rows, the test will fail.)
+
+		interest, ie := db.GetInterests()
+		if ie != nil {
+			t.Errorf("%s: %v", dbType, ie)
+			return
+		}
+
+		if len(interest) < 2 {
+			t.Errorf("%s: need at least two interest, got %d", dbType, len(interest))
+			return
+		}
+
+		// Create two MembersInterest rows in the database
+		mi1 := NewMembersInterest(user.ID, interest[0].ID)
+		createError1 := db.CreateMembersInterest(mi1)
+		if createError1 != nil {
+			t.Errorf("%s: %v", db.Config.Type, createError1)
+			continue
+		}
+		mi2 := NewMembersInterest(user.ID, interest[1].ID)
+		createError2 := db.CreateMembersInterest(mi2)
+		if createError2 != nil {
+			t.Errorf("%s: %v", db.Config.Type, createError2)
+			continue
+		}
+
+		// Test GetMembersInterests.  The interest objects were fetched in order
+		// and the results are ordered.
+		got, gotError := db.GetMembersInterests(user.ID)
+		if gotError != nil {
+			t.Errorf("%s: %v", db.Config.Type, gotError)
+			continue
+		}
+		if len(got) != 2 {
+			t.Errorf("%s: want 2 rows got %d", db.Config.Type, len(got))
+			continue
+		}
+		if got[0].UserID != user.ID {
+			t.Errorf("%s: want id %d got %d", db.Config.Type, user.ID, got[0].UserID)
+			continue
+		}
+		if got[0].InterestID != interest[0].ID {
+			t.Errorf("%s: want id %d got %d", db.Config.Type, interest[0].ID, got[0].InterestID)
+			continue
+		}
+		if got[1].UserID != user.ID {
+			t.Errorf("%s: want id %d got %d", db.Config.Type, user.ID, got[1].UserID)
+			continue
+		}
+		if got[1].InterestID != interest[1].ID {
+			t.Errorf("%s: want id %d got %d", db.Config.Type, interest[1].ID, got[1].InterestID)
+			continue
+		}
+
+		// Check the unique constraint handling - attempt to create a copy
+		// of mi1.
+		mi3 := NewMembersInterest(user.ID, interest[0].ID)
+		createError3 := db.CreateMembersInterest(mi3)
+		if createError3 != nil {
+			t.Errorf("%s: %v", db.Config.Type, createError3)
+			continue
+		}
+
+		// There should still only be two interests.
+		got2, got2Error := db.GetMembersInterests(user.ID)
+		if got2Error != nil {
+			t.Errorf("%s: %v", db.Config.Type, got2Error)
+			continue
+		}
+		if len(got2) != 2 {
+			t.Errorf("%s: want 2 rows got %d", db.Config.Type, len(got2))
+			continue
+		}
+	}
+}
+
+// TestGetMembersInterestForUserWithJunkUser checks that GetMembersInterestForUserWithJunkUser
+// returns an empty list if the user doesn't exist.
+func TestGetMembersInterestsWithJunkUser(t *testing.T) {
+	for _, dbType := range databaseList {
+
+		db, connError := ConnectForTesting(dbType)
+		if connError != nil {
+			t.Error(connError)
+			return
+		}
+
+		defer db.Rollback()
+		defer db.CloseAndDelete()
+
+		// In theory the maximum user ID is the maximum 64-bit number, but on my
+		// system they are limited to 32 bits.  No matter, that should be big
+		// enough to ensure that there is no user with an ID this big.
+		const junkUserID = math.MaxInt32
+		interests, err := db.GetMembersInterests(junkUserID)
+		if err != nil {
+			t.Errorf("%s: %v", dbType, err)
+			continue
+		}
+
+		if len(interests) != 0 {
+			t.Errorf("%s: expected an empty list, got %d items", dbType, len(interests))
+			continue
+		}
+	}
+}
+
+// TestUpdateMembersOtherInterests checkss UpdateMembersOtherInterests.
+func TestUpdateMembersOtherInterests(t *testing.T) {
+	for _, dbType := range databaseList {
+
+		db, connError := OpenDBForTesting(dbType)
+
+		if connError != nil {
+			t.Errorf("%s: %v", dbType, connError)
+			continue
+		}
+
+		db.BeginTx()
+
+		defer db.Rollback()
+		defer db.CloseAndDelete()
+
+		prepError := PrepareTestTables(db)
+		if prepError != nil {
+			t.Errorf("%s: %v", dbType, prepError)
+			continue
+		}
+
+		// Set up.
+		user, cue := CreateUser(db)
+		if cue != nil {
+			t.Errorf("%s: %v", dbType, cue)
+			continue
+		}
+
+		const interests = "stuff"
+		moi := NewMembersOtherInterests(user.ID, interests)
+		coi := db.CreateMembersOtherInterests(moi)
+		if coi != nil {
+			t.Errorf("%s: %v", dbType, coi)
+			continue
+		}
+
+		// Test.
+		const newInterest = "other stuff"
+		moi.Interests = newInterest
+		db.UpdateMembersOtherInterests(moi)
+
+		got, fetchError := db.GetMembersOtherInterests(user.ID)
+		if fetchError != nil {
+			t.Errorf("%s: %v", dbType, fetchError)
+			continue
+		}
+
+		if *got != *moi {
+			t.Errorf("%s: want %v, got %v", dbType, *moi, *got)
+			continue
+		}
+	}
+}
+
+// TestUpsertMembersOtherInterests checks UpsertMembersOtherInterests.
+func TestUpsertMembersOtherInterests(t *testing.T) {
+	for _, dbType := range databaseList {
+
+		db, connError := OpenDBForTesting(dbType)
+
+		if connError != nil {
+			t.Errorf("%s: %v", dbType, connError)
+			continue
+		}
+
+		db.BeginTx()
+
+		defer db.Rollback()
+		defer db.CloseAndDelete()
+
+		prepError := PrepareTestTables(db)
+		if prepError != nil {
+			t.Errorf("%s: %v", dbType, prepError)
+			continue
+		}
+
+		// Set up.
+		user1, cue := CreateUser(db)
+		if cue != nil {
+			t.Errorf("%s: %v", dbType, cue)
+			continue
+		}
+
+		user2, cue2 := CreateUser(db)
+		if cue2 != nil {
+			t.Errorf("%s: %v", dbType, cue2)
+			continue
+		}
+
+		interests1, e1 := CreateUuid(db.Transaction, "moi_interests", "adm_members_other_interests")
+		if e1 != nil {
+			t.Error(e1)
+			return
+		}
+		want1 := NewMembersOtherInterests(user1.ID, interests1)
+		coi := db.CreateMembersOtherInterests(want1)
+		if coi != nil {
+			t.Errorf("%s: %v", dbType, coi)
+			continue
+		}
+
+		// We have two users.  User1 has expressed some interests.  User2
+		// has not.
+
+		// Test.
+
+		// Upsert user 1, relacing original interests.
+		interests2, e2 := CreateUuid(db.Transaction, "moi_interests", "adm_members_other_interests")
+		if e2 != nil {
+			t.Error(e2)
+			return
+		}
+		want1.Interests = interests2
+		ue1 := db.UpsertMembersOtherInterests(want1)
+		if ue1 != nil {
+			t.Errorf("%s: %v", dbType, ue1)
+			continue
+		}
+
+		got1, fetchError1 := db.GetMembersOtherInterests(user1.ID)
+		if fetchError1 != nil {
+			t.Errorf("%s: %v", dbType, fetchError1)
+			continue
+		}
+
+		if *got1 != *want1 {
+			t.Errorf("%s: want %v, got %v", dbType, *want1, *got1)
+			continue
+		}
+
+		// Upsert user 2 creating a new record.
+		interests3, e3 := CreateUuid(db.Transaction, "moi_interests", "adm_members_other_interests")
+		if e3 != nil {
+			t.Error(e3)
+			return
+		}
+		want2 := NewMembersOtherInterests(user2.ID, interests3)
+		ue2 := db.UpsertMembersOtherInterests(want2)
+		if ue2 != nil {
+			t.Errorf("%s: %v", dbType, ue2)
+			continue
+		}
+		got2, fetchError2 := db.GetMembersOtherInterests(user2.ID)
+		if fetchError2 != nil {
+			t.Errorf("%s: %v", dbType, fetchError2)
+			continue
+		}
+
+		if *got2 != *want2 {
+			t.Errorf("%s: want %v, got %v", dbType, *want2, *got2)
+			continue
+		}
+	}
+}
+
+// TestGetMembersOtherInterestsForUser checks GetMembersOtherInterestsForUser.
+func TestGetMembersOtherInterestsForUser(t *testing.T) {
+
+	for _, dbType := range databaseList {
+
+		db, connError := OpenDBForTesting(dbType)
+
+		if connError != nil {
+			t.Error(connError)
+			return
+		}
+
+		db.BeginTx()
+
+		defer db.Rollback()
+		defer db.CloseAndDelete()
+
+		prepError := PrepareTestTables(db)
+		if prepError != nil {
+			t.Error(prepError)
+		}
+
+		//  Create a user.
+		loginName, e1 := CreateUuid(db.Transaction, "usr_login_name", "adm_users")
+		if e1 != nil {
+			t.Error(e1)
+			return
+		}
+		user := NewUser(loginName)
+		createUserError := db.CreateUser(user)
+		if createUserError != nil {
+			t.Error(createUserError)
+			return
+		}
+
+		// Create an other interest.
+		interests, e2 := CreateUuid(db.Transaction, "moi_interests", "adm_members_other_interests")
+		if e2 != nil {
+			t.Error(e2)
+			return
+		}
+
+		moi := NewMembersOtherInterests(user.ID, interests)
+
+		createInterestError := db.CreateMembersOtherInterests(moi)
+		if createInterestError != nil {
+			t.Error(createInterestError)
+			return
+		}
+
+		// Test GetOMembersOtherInterestsForUser.
+		got, fetchError := db.GetMembersOtherInterests(user.ID)
+		if fetchError != nil {
+			t.Error(fetchError)
+			return
+		}
+
+		if got.ID <= 0 {
+			t.Errorf("%s: want id greater than zero got %d", db.Config.Type, got.ID)
+			continue
+		}
+
+		if got.UserID != user.ID {
+			t.Errorf("%s: want id %d got %d", db.Config.Type, user.ID, got.UserID)
+			continue
+		}
+
+		if got.Interests != interests {
+			t.Errorf("%s: want interests %s got %s", db.Config.Type, interests, got.Interests)
+			continue
+		}
+	}
+}
+
+// TestGetAndSetExtraDetails checkes SetExtraDetails and GetExtraDetails.
+func TestSetAndGetExtraDetails(t *testing.T) {
+	for _, dbType := range databaseList {
+
+		db, connError := ConnectForTesting(dbType)
+
+		if connError != nil {
+			t.Error(connError)
+			return
+		}
+
+		defer db.Rollback()
+		defer db.CloseAndDelete()
+
+		u, ue := CreateUser(db)
+		if ue != nil {
+			// This ahould never fail.
+			t.Fatal(ue)
+		}
+
+		toi, toie := db.GetInterests()
+		if toie != nil {
+			t.Fatal(toie)
+		}
+
+		var topics = make(map[int64]interface{})
+		for _, interest := range toi {
+			topics[interest.ID] = nil
+		}
+
+		ms := MembershipSale{
+			UserID:                u.ID,
+			AddressLine1:          "a",
+			AddressLine2:          "b",
+			AddressLine3:          "c",
+			Town:                  "d",
+			County:                "e",
+			Postcode:              "f",
+			Country:               "GBR",
+			Phone:                 "g",
+			Mobile:                "h",
+			TopicsOfInterest:      topics,
+			OtherTopicsOfInterest: "i",
+		}
+
+		saveError := db.SaveExtraDetails(&ms)
+		if saveError != nil {
+			t.Error(saveError)
+			break
+		}
+
+		got := MembershipSale{UserID: u.ID}
+		fetchError := db.GetExtraDetails(&got)
+		if fetchError != nil {
+			t.Error(fetchError)
+			break
+		}
+
+		if reflect.DeepEqual(got, ms) {
+			t.Errorf("want %v got %v", ms, got)
+			break
+		}
+	}
+}
+
 func TestGetLoginNames(t *testing.T) {
 	fmt.Println("TestGetLoginNames")
 
@@ -477,6 +985,7 @@ func TestGetLoginNames(t *testing.T) {
 			MembershipSale{
 				Email:          "foo@example.com",
 				AssocUserID:    42,
+				AssocTitle:     "Prof",
 				AssocFirstName: "Fred",
 				AssocLastName:  "Smith",
 			},
@@ -497,6 +1006,7 @@ func TestGetLoginNames(t *testing.T) {
 			"ordinary member and associate with email",
 			MembershipSale{
 				AssocUserID:    1,
+				AssocTitle:     "Dr",
 				AssocFirstName: "Fred",
 				Email:          "foo@example.com",
 				AssocEmail:     "bar@example.com",
@@ -510,6 +1020,21 @@ func TestGetLoginNames(t *testing.T) {
 			MembershipSale{
 				AssocUserID:    42,
 				Email:          "foo@example.com",
+				AssocTitle:     "Mr",
+				AssocFirstName: "Fred",
+				AssocLastName:  "Smith",
+			},
+			2,
+			"foo@example.com",
+			"Fred.Smith",
+		},
+		{
+			"ordinary member and associate have the same email address",
+			MembershipSale{
+				AssocUserID:    42,
+				Email:          "foo@example.com",
+				AssocEmail:     "foo@example.com",
+				AssocTitle:     "Mr",
 				AssocFirstName: "Fred",
 				AssocLastName:  "Smith",
 			},
@@ -577,6 +1102,30 @@ func TestCreateAccounts(t *testing.T) {
 			t.Error(prepError)
 		}
 
+		loginName1, e1 := CreateUuid(db.Transaction, "usr_login_name", "adm_users")
+		if e1 != nil {
+			t.Error(e1)
+			return
+		}
+
+		loginName2, e2 := CreateUuid(db.Transaction, "usr_login_name", "adm_users")
+		if e2 != nil {
+			t.Error(e2)
+			return
+		}
+
+		loginName3, e3 := CreateUuid(db.Transaction, "usr_login_name", "adm_users")
+		if e3 != nil {
+			t.Error(e3)
+			return
+		}
+
+		loginName4, e4 := CreateUuid(db.Transaction, "usr_login_name", "adm_users")
+		if e4 != nil {
+			t.Error(e4)
+			return
+		}
+
 		var testData = []struct {
 			description              string
 			now                      time.Time // This controls the start date of the new member.
@@ -596,9 +1145,12 @@ func TestCreateAccounts(t *testing.T) {
 				MembershipSale{
 					TransactionType: TransactionTypeNewMember,
 					MembershipYear:  2025,
-					Email:           "foo1@example.com",
+					Email:           loginName1,
+					Title:           "Mr",
+					FirstName:       "c",
+					LastName:        "d",
 				},
-				"foo1@example.com",
+				loginName1,
 				"2024-10-01",
 				"2024-10-01T00:00:00Z",
 				"2025-12-31",
@@ -612,17 +1164,21 @@ func TestCreateAccounts(t *testing.T) {
 				MembershipSale{
 					TransactionType: TransactionTypeNewMember,
 					MembershipYear:  2024,
-					AssocUserID:     42,
-					Email:           "foo2@example.com",
+					Email:           loginName2,
+					Title:           "Prof",
+					FirstName:       "a",
+					LastName:        "b",
+					AssocTitle:      "Dr",
 					AssocFirstName:  "John",
-					AssocEmail:      "bar@example.com",
+					AssocLastName:   "Smith",
+					AssocEmail:      loginName3,
 				},
-				"foo2@example.com",
+				loginName2,
 				"2024-07-04",
 				"2024-07-04T00:00:00Z",
 				"2024-12-31",
 				"2024-12-31T00:00:00Z",
-				"bar@example.com",
+				loginName3,
 			},
 			{
 				"ordinary member and associate without email",
@@ -631,12 +1187,14 @@ func TestCreateAccounts(t *testing.T) {
 				MembershipSale{
 					TransactionType: TransactionTypeNewMember,
 					MembershipYear:  2025,
-					Email:           "foo3@example.com",
+					Email:           loginName4,
+					Title:           "Mr",
 					AssocUserID:     4,
+					AssocTitle:      "Professor",
 					AssocFirstName:  "Fred",
 					AssocLastName:   "Smith",
 				},
-				"foo3@example.com",
+				loginName4,
 				"2025-02-14",
 				"2025-02-14T00:00:00Z",
 				"2025-12-31",
@@ -649,7 +1207,7 @@ func TestCreateAccounts(t *testing.T) {
 
 			u1, u2, createError := db.CreateAccounts(&td.sale, td.now, td.end)
 			if createError != nil {
-				t.Errorf("%s: %v", td.description, createError)
+				t.Errorf("%s: %s - %v", dbType, td.description, createError)
 			}
 
 			// Check that the database records have been created, for each
@@ -659,7 +1217,7 @@ func TestCreateAccounts(t *testing.T) {
 
 			user1, fetchUser1Error := db.GetUser(u1)
 			if fetchUser1Error != nil {
-				t.Errorf("%s: %v", td.description, fetchUser1Error)
+				t.Errorf("%s: %s - %v", dbType, td.description, fetchUser1Error)
 			}
 
 			// We don't know what the uuid is supposed to be so we can only check that
@@ -888,7 +1446,7 @@ func TestMemberExists(t *testing.T) {
 			continue
 		}
 
-		user, _, wantFirstName, wantLastName, umError := createTestUserEtc(db)
+		user, _, wantTitle, wantFirstName, wantLastName, umError := createTestUserEtc(db)
 		if umError != nil {
 			t.Errorf("%s: %v", dbType, umError)
 			continue
@@ -909,6 +1467,23 @@ func TestMemberExists(t *testing.T) {
 
 		if email != user.LoginName {
 			t.Errorf("want %s got %s", user.LoginName, email)
+			continue
+		}
+
+		it, te := db.GetUserDataFieldIDByNameIntern("SALUTATION")
+		if te != nil {
+			t.Error(te)
+			continue
+		}
+
+		tt, tError := GetUserDataField[string](db, it, user.ID)
+		if tError != nil {
+			t.Error(tError)
+			continue
+		}
+
+		if tt != wantTitle {
+			t.Errorf("want %s got %s", wantTitle, tt)
 			continue
 		}
 
@@ -988,22 +1563,23 @@ func TestMemberExistsDetailed(t *testing.T) {
 			t.Error(prepError)
 		}
 
-		user, _, fn, ln, ue := createTestUserEtc(db)
+		user, _, tl, fn, ln, ue := createTestUserEtc(db)
 		if ue != nil {
 			t.Errorf("%s: %v", dbType, ue)
 		}
 
 		var testData = []struct {
 			description string
+			title       string
 			firstName   string
 			lastName    string
 			email       string
 			shouldWork  bool
 		}{
-			{"no match", "junk", "junk", "junk", false},
-			{"all match", fn, ln, user.LoginName, true},
-			{"email matches", "junk", "more junk", user.LoginName, true},
-			{"names match", fn, ln, "junk", true},
+			{"no match", "junk", "junk", "junk", "junk", false},
+			{"all match", tl, fn, ln, user.LoginName, true},
+			{"email matches", "junk", "junk", "more junk", user.LoginName, true},
+			{"names match", tl, fn, ln, "junk", true},
 		}
 
 		for _, td := range testData {
@@ -1059,7 +1635,7 @@ func TestSetLastPayment(t *testing.T) {
 			t.Error(prepError)
 		}
 
-		user, _, _, _, umError := createTestUserEtc(db)
+		user, _, _, _, _, umError := createTestUserEtc(db)
 		if umError != nil {
 			em := fmt.Sprintf("%s: %v", db.Config.Type, umError)
 			t.Error(em)
@@ -1122,7 +1698,7 @@ func TestSetDonationToSociety(t *testing.T) {
 			t.Error(prepError)
 		}
 
-		user, _, _, _, umError := createTestUserEtc(db)
+		user, _, _, _, _, umError := createTestUserEtc(db)
 		if umError != nil {
 			em := fmt.Sprintf("%s: %v", db.Config.Type, umError)
 			t.Error(em)
@@ -1178,7 +1754,7 @@ func TestSetDonationToMuseum(t *testing.T) {
 			t.Error(prepError)
 		}
 
-		user, _, _, _, umError := createTestUserEtc(db)
+		user, _, _, _, _, umError := createTestUserEtc(db)
 		if umError != nil {
 			em := fmt.Sprintf("%s: %v", db.Config.Type, umError)
 			t.Error(em)
@@ -1253,40 +1829,17 @@ func TestSetUserDataField(t *testing.T) {
 
 	for _, dbType := range databaseList {
 
-		db, connError := OpenDBForTesting(dbType)
+		db, connError := ConnectForTesting(dbType)
 
 		if connError != nil {
 			t.Error(connError)
 			continue
 		}
 
-		txError := db.BeginTx()
-
-		if txError != nil {
-			t.Error(txError)
-			continue
-		}
-
 		defer db.Rollback()
 		defer db.CloseAndDelete()
 
-		prepError := PrepareTestTables(db)
-		if prepError != nil {
-			t.Error(prepError)
-			continue
-		}
-
-		// Use different names each time to avoid clashes in the postgres
-		// database.
-
-		loginName, e1 := CreateUuid(db.Transaction, "usr_login_name", "adm_users")
-		if e1 != nil {
-			t.Error(e1)
-		}
-
-		// Create a user
-		user := NewUser(loginName)
-		cuError := db.CreateUser(user)
+		user, cuError := CreateUser(db)
 		if cuError != nil {
 			t.Error(cuError)
 			continue
@@ -1296,7 +1849,7 @@ func TestSetUserDataField(t *testing.T) {
 			Want      string
 			FieldName string
 		}{
-			{loginName, "EMAIL"},
+			{user.LoginName, "EMAIL"},
 			{"Dr", "SALUTATION"},
 			{"Peter", "FIRST_NAME"},
 			{"Smith", "LAST_NAME"},
@@ -1305,7 +1858,7 @@ func TestSetUserDataField(t *testing.T) {
 			{"Some Bigger Place", "ADDRESS_LINE_3"},
 			{"Some County", "COUNTY"},
 			{"AA1 1AA", "POSTCODE"},
-			{"Fairyland", "COUNTRY"},
+			{"ABC", "COUNTRY"},
 			{"01234 567890", "PHONE"},
 			{"07123 456789", "MOBILE"},
 		}
@@ -1331,16 +1884,9 @@ func TestSetUserDataField(t *testing.T) {
 
 		for _, td := range testData {
 
-			f := db.UserField[td.FieldName]
-			if f == nil {
-				t.Errorf("%s: cannot find adm_user_field %s", dbType, td.FieldName)
-				continue
-			}
-
-			fieldID := f.ID
-
-			if fieldID == 0 {
-				t.Error("want non-zero adm_user_field ID")
+			fieldID, ide := db.GetUserDataFieldIDByNameIntern(td.FieldName)
+			if ide != nil {
+				t.Error(ide)
 				continue
 			}
 
@@ -1383,7 +1929,7 @@ func TestSetMembersAtAddress(t *testing.T) {
 			t.Error(prepError)
 		}
 
-		user, _, _, _, umError := createTestUserEtc(db)
+		user, _, _, _, _, umError := createTestUserEtc(db)
 		if umError != nil {
 			t.Error(umError)
 			return
@@ -1446,7 +1992,7 @@ func TestSetDateLastPaid(t *testing.T) {
 			t.Error(prepError)
 		}
 
-		user, _, _, _, umError := createTestUserEtc(db)
+		user, _, _, _, _, umError := createTestUserEtc(db)
 		if umError != nil {
 			t.Error(umError)
 			return
@@ -1515,7 +2061,7 @@ func TestSetFriendField(t *testing.T) {
 			t.Error(prepError)
 		}
 
-		user, _, _, _, umError := createTestUserEtc(db)
+		user, _, _, _, _, umError := createTestUserEtc(db)
 		if umError != nil {
 			t.Error(umError)
 			return
@@ -1554,7 +2100,7 @@ func TestSetMemberEndDate(t *testing.T) {
 			continue
 		}
 
-		user, _, _, _, ue := createTestUserEtc(db)
+		user, _, _, _, _, ue := createTestUserEtc(db)
 		if ue != nil {
 			t.Errorf("%s: %v", dbType, ue)
 		}
@@ -1573,7 +2119,8 @@ func TestSetMemberEndDate(t *testing.T) {
 	}
 }
 
-func TestSetGiftaidField(t *testing.T) {
+// TestSetGiftaid checks the SetGiftaid method.
+func TestSetGiftaid(t *testing.T) {
 
 	for _, dbType := range databaseList {
 		db, connError := OpenDBForTesting(dbType)
@@ -1601,7 +2148,7 @@ func TestSetGiftaidField(t *testing.T) {
 			t.Errorf("%s: %v", dbType, fetchIDErr)
 		}
 
-		user, _, _, _, ue := createTestUserEtc(db)
+		user, _, _, _, _, ue := createTestUserEtc(db)
 		if ue != nil {
 			t.Errorf("%s: %v", dbType, ue)
 		}
@@ -1619,14 +2166,14 @@ func TestSetGiftaidField(t *testing.T) {
 		}
 
 		// Create a giftaid field set to true.
-		createErr1 := db.SetGiftaidField(user.ID, true)
+		createErr1 := db.SetGiftaid(user.ID, true)
 		if createErr1 != nil {
 			t.Errorf("%s: %v", db.Config.Type, createErr1)
 			break
 		}
 
 		// Check the field - should be true.
-		got1, err1 := db.GetGiftaidField(user.ID)
+		got1, err1 := db.GetGiftaid(user.ID)
 
 		if err1 != nil {
 			t.Error(err1)
@@ -1638,12 +2185,12 @@ func TestSetGiftaidField(t *testing.T) {
 		}
 
 		// Update the giftaid field to false.
-		createErr := db.SetGiftaidField(user.ID, false)
+		createErr := db.SetGiftaid(user.ID, false)
 		if createErr != nil {
 			t.Errorf("%s: %v", db.Config.Type, createErr)
 		}
 
-		got2, err2 := db.GetGiftaidField(user.ID)
+		got2, err2 := db.GetGiftaid(user.ID)
 
 		if err2 != nil {
 			t.Error(err2)
@@ -1680,13 +2227,13 @@ func TestMembershipSale(t *testing.T) {
 			t.Error(prepError)
 		}
 
-		user, _, _, _, ue := createTestUserEtc(db)
+		user, _, _, _, _, ue := createTestUserEtc(db)
 		if ue != nil {
 			t.Errorf("%s: %v", dbType, ue)
 			continue
 		}
 
-		assoc, _, _, _, ae := createTestUserEtc(db)
+		assoc, _, _, _, _, ae := createTestUserEtc(db)
 		if ae != nil {
 			t.Errorf("%s: %v", dbType, ue)
 			continue
@@ -1698,35 +2245,66 @@ func TestMembershipSale(t *testing.T) {
 			want        MembershipSale
 		}{
 			{
-				"no associate, no donations",
+				"all fields set except User IDs.",
 				MembershipSale{
-					ID: 0, PaymentService: "f", PaymentStatus: "g", PaymentID: "h",
-					MembershipYear: 2025, UserID: user.ID, OrdinaryMemberFeePaid: 24.0,
-					Friend: true, FriendFeePaid: 5, Giftaid: true,
+					ID: 0, PaymentService: "a", PaymentStatus: "b", PaymentID: "x",
+					MembershipYear: 2025, UserID: 0, OrdinaryMemberFeePaid: 24.0,
+					Title: "Prof", FirstName: "John", LastName: "Lennon", Email: "a@b.com",
+					Friend: true, FriendFeePaid: 5, DonationToSociety: 2,
+					DonationToMuseum: 6.0, Giftaid: true,
 					AssocUserID: 0, AssocFeePaid: 42.0,
+					AssocTitle: "Mr", AssocFirstName: "George", AssocLastName: "Harrison", AssocEmail: "c@d.com",
 					AssocFriend: true, AssocFriendFeePaid: 43.0,
 				},
 				MembershipSale{
-					ID: 0, PaymentService: "f", PaymentStatus: "g", PaymentID: "h",
-					MembershipYear: 2025, UserID: user.ID,
-					OrdinaryMemberFeePaid: 24.0,
-					Friend:                true, FriendFeePaid: 5, DonationToSociety: 0,
-					DonationToMuseum: 0, Giftaid: true,
-					AssocUserID: 0, AssocFeePaid: 0,
-					AssocFriend: false, AssocFriendFeePaid: 0,
+					ID: 0, PaymentService: "a", PaymentStatus: "b", PaymentID: "x",
+					MembershipYear: 2025, UserID: 0, OrdinaryMemberFeePaid: 24.0,
+					Title: "Prof", FirstName: "John", LastName: "Lennon", Email: "a@b.com",
+					Friend: true, FriendFeePaid: 5, DonationToSociety: 2,
+					DonationToMuseum: 6.0, Giftaid: true,
+					AssocUserID: 0, AssocFeePaid: 42.0,
+					AssocTitle: "Mr", AssocFirstName: "George", AssocLastName: "Harrison", AssocEmail: "c@d.com",
+					AssocFriend: true, AssocFriendFeePaid: 43.0,
 				},
 			},
 			{
-				"no associate",
+				"all fields set",
 				MembershipSale{
-					ID: 0, PaymentService: "c", PaymentStatus: "d", PaymentID: "e",
+					ID: 0, PaymentService: "a", PaymentStatus: "b", PaymentID: "x",
 					MembershipYear: 2025, UserID: user.ID,
+					Title: "Prof", FirstName: "Jane", LastName: "Smith",
 					OrdinaryMemberFeePaid: 24.0,
 					Friend:                true, FriendFeePaid: 5,
 					DonationToSociety: 2,
 					DonationToMuseum:  6.0, Giftaid: true,
+					AssocTitle: "Dr", AssocFirstName: "Vivien", AssocLastName: "Jones",
+					AssocUserID: assoc.ID, AssocFeePaid: 42.0,
+					AssocFriend: true, AssocFriendFeePaid: 43.0,
+				},
+				MembershipSale{
+					ID: 0, PaymentService: "a", PaymentStatus: "b", PaymentID: "x",
+					MembershipYear: 2025, UserID: user.ID,
+					Title: "Prof", FirstName: "Jane", LastName: "Smith",
+					OrdinaryMemberFeePaid: 24.0,
+					Friend:                true, FriendFeePaid: 5, DonationToSociety: 2,
+					DonationToMuseum: 6.0, Giftaid: true,
+					AssocTitle: "Dr", AssocFirstName: "Vivien", AssocLastName: "Jones",
+					AssocUserID: assoc.ID, AssocFeePaid: 42.0,
+					AssocFriend: true, AssocFriendFeePaid: 43.0,
+				},
+			},
+
+			{
+				"no associate",
+				MembershipSale{
+					ID: 0, PaymentService: "c", PaymentStatus: "d", PaymentID: "e",
+					MembershipYear: 2025, UserID: user.ID, OrdinaryMemberFeePaid: 24.0,
+					Title: "Prof", FirstName: "Jane", LastName: "Smith",
+					Friend: true, FriendFeePaid: 5,
+					DonationToSociety: 2,
+					DonationToMuseum:  6.0, Giftaid: true,
 					AssocUserID: 0,
-					// These values should be ignored.
+					AssocTitle:  "Dr", AssocFirstName: "john", AssocLastName: "Jones",
 					AssocFeePaid: 42.0,
 					AssocFriend:  true, AssocFriendFeePaid: 43.0,
 				},
@@ -1734,31 +2312,11 @@ func TestMembershipSale(t *testing.T) {
 					ID: 0, PaymentService: "c", PaymentStatus: "d", PaymentID: "e",
 					MembershipYear: 2025, UserID: user.ID,
 					OrdinaryMemberFeePaid: 24.0,
-					Friend:                true, FriendFeePaid: 5, DonationToSociety: 2,
+					Title:                 "Prof", FirstName: "Jane", LastName: "Smith",
+					Friend: true, FriendFeePaid: 5, DonationToSociety: 2,
 					DonationToMuseum: 6.0, Giftaid: true,
-					AssocUserID: 0, AssocFeePaid: 0.0,
-					AssocFriend: false, AssocFriendFeePaid: 0.0,
-				},
-			},
-			{
-				"all",
-				MembershipSale{
-					ID: 0, PaymentService: "a", PaymentStatus: "b", PaymentID: "x",
-					MembershipYear: 2025, UserID: user.ID,
-					OrdinaryMemberFeePaid: 24.0,
-					Friend:                true, FriendFeePaid: 5,
-					DonationToSociety: 2,
-					DonationToMuseum:  6.0, Giftaid: true,
-					AssocUserID: assoc.ID, AssocFeePaid: 42.0,
-					AssocFriend: true, AssocFriendFeePaid: 43.0,
-				},
-				MembershipSale{
-					ID: 0, PaymentService: "a", PaymentStatus: "b", PaymentID: "x",
-					MembershipYear: 2025, UserID: user.ID,
-					OrdinaryMemberFeePaid: 24.0,
-					Friend:                true, FriendFeePaid: 5, DonationToSociety: 2,
-					DonationToMuseum: 6.0, Giftaid: true,
-					AssocUserID: assoc.ID, AssocFeePaid: 42.0,
+					AssocUserID: 0, AssocFeePaid: 42.0,
+					AssocTitle: "Dr", AssocFirstName: "john", AssocLastName: "Jones",
 					AssocFriend: true, AssocFriendFeePaid: 43.0,
 				},
 			},
@@ -1771,6 +2329,7 @@ func TestMembershipSale(t *testing.T) {
 					OrdinaryMemberFeePaid: 24.0,
 					Friend:                true, FriendFeePaid: 5, Giftaid: true,
 					AssocUserID: assoc.ID, AssocFeePaid: 42.0,
+					AssocTitle: "Dr", AssocFirstName: "Vivien", AssocLastName: "Jones",
 					AssocFriend: true, AssocFriendFeePaid: 43.0,
 				},
 				MembershipSale{
@@ -1780,6 +2339,7 @@ func TestMembershipSale(t *testing.T) {
 					Friend:                true, FriendFeePaid: 5, DonationToSociety: 0,
 					DonationToMuseum: 0, Giftaid: true,
 					AssocUserID: assoc.ID, AssocFeePaid: 42.0,
+					AssocTitle: "Dr", AssocFirstName: "Vivien", AssocLastName: "Jones",
 					AssocFriend: true, AssocFriendFeePaid: 43.0,
 				},
 			},
@@ -1799,8 +2359,8 @@ func TestMembershipSale(t *testing.T) {
 					OrdinaryMemberFeePaid: 24.0,
 					Friend:                true, FriendFeePaid: 5, DonationToSociety: 0,
 					DonationToMuseum: 0, Giftaid: true,
-					AssocUserID: 0, AssocFeePaid: 0,
-					AssocFriend: false, AssocFriendFeePaid: 0,
+					AssocUserID: 0, AssocFeePaid: 42.0,
+					AssocFriend: true, AssocFriendFeePaid: 43.0,
 				},
 			},
 			{
@@ -1808,17 +2368,21 @@ func TestMembershipSale(t *testing.T) {
 				MembershipSale{
 					ID: 0, PaymentService: "a", PaymentStatus: "b", PaymentID: "x",
 					MembershipYear: 2025, UserID: user.ID, OrdinaryMemberFeePaid: 24.0,
+					Title: "Prof", FirstName: "John", LastName: "Lennon", Email: "a@b.com",
 					Friend: true, FriendFeePaid: 5, DonationToSociety: 2,
 					DonationToMuseum: 6.0, Giftaid: false,
 					AssocUserID: assoc.ID, AssocFeePaid: 42.0,
+					AssocTitle: "Dr", AssocFirstName: "Vivien", AssocLastName: "Jones",
 					AssocFriend: false, AssocFriendFeePaid: 43.0,
 				},
 				MembershipSale{
 					ID: 0, PaymentService: "a", PaymentStatus: "b", PaymentID: "x",
 					MembershipYear: 2025, UserID: user.ID, OrdinaryMemberFeePaid: 24.0,
+					Title: "Prof", FirstName: "John", LastName: "Lennon", Email: "a@b.com",
 					Friend: true, FriendFeePaid: 5, DonationToSociety: 2,
 					DonationToMuseum: 6.0, Giftaid: false,
 					AssocUserID: assoc.ID, AssocFeePaid: 42.0,
+					AssocTitle: "Dr", AssocFirstName: "Vivien", AssocLastName: "Jones",
 					AssocFriend: false, AssocFriendFeePaid: 43.0,
 				},
 			},
@@ -1827,17 +2391,21 @@ func TestMembershipSale(t *testing.T) {
 				MembershipSale{
 					ID: 0, PaymentService: "a", PaymentStatus: "b", PaymentID: "x",
 					MembershipYear: 2025, UserID: user.ID, OrdinaryMemberFeePaid: 24.0,
+					Title: "Prof", FirstName: "John", LastName: "Lennon", Email: "a@b.com",
 					Friend: false, FriendFeePaid: 5, DonationToSociety: 2,
 					DonationToMuseum: 6.0, Giftaid: true,
 					AssocUserID: assoc.ID, AssocFeePaid: 42.0,
+					AssocTitle: "Dr", AssocFirstName: "Vivien", AssocLastName: "Jones",
 					AssocFriend: false, AssocFriendFeePaid: 0.0,
 				},
 				MembershipSale{
 					ID: 0, PaymentService: "a", PaymentStatus: "b", PaymentID: "x",
 					MembershipYear: 2025, UserID: user.ID, OrdinaryMemberFeePaid: 24.0,
+					Title: "Prof", FirstName: "John", LastName: "Lennon", Email: "a@b.com",
 					Friend: false, FriendFeePaid: 5, DonationToSociety: 2,
 					DonationToMuseum: 6.0, Giftaid: true,
 					AssocUserID: assoc.ID, AssocFeePaid: 42.0,
+					AssocTitle: "Dr", AssocFirstName: "Vivien", AssocLastName: "Jones",
 					AssocFriend: false, AssocFriendFeePaid: 0.0,
 				},
 			},
@@ -1846,17 +2414,21 @@ func TestMembershipSale(t *testing.T) {
 				MembershipSale{
 					ID: 0, PaymentService: "a", PaymentStatus: "b", PaymentID: "x",
 					MembershipYear: 2025, UserID: user.ID, OrdinaryMemberFeePaid: 24.0,
+					Title: "Prof", FirstName: "John", LastName: "Lennon", Email: "a@b.com",
 					Friend: false, FriendFeePaid: 5, DonationToSociety: 2,
 					DonationToMuseum: 6.0, Giftaid: false,
 					AssocUserID: assoc.ID, AssocFeePaid: 42.0,
+					AssocTitle: "Dr", AssocFirstName: "Vivien", AssocLastName: "Jones",
 					AssocFriend: true, AssocFriendFeePaid: 43.0,
 				},
 				MembershipSale{
 					ID: 0, PaymentService: "a", PaymentStatus: "b", PaymentID: "x",
 					MembershipYear: 2025, UserID: user.ID, OrdinaryMemberFeePaid: 24.0,
+					Title: "Prof", FirstName: "John", LastName: "Lennon", Email: "a@b.com",
 					Friend: false, FriendFeePaid: 5, DonationToSociety: 2,
 					DonationToMuseum: 6.0, Giftaid: false,
 					AssocUserID: assoc.ID, AssocFeePaid: 42.0,
+					AssocTitle: "Dr", AssocFirstName: "Vivien", AssocLastName: "Jones",
 					AssocFriend: true, AssocFriendFeePaid: 43.0,
 				},
 			},
@@ -1866,22 +2438,22 @@ func TestMembershipSale(t *testing.T) {
 			id, createError := td.input.Create(db)
 			if createError != nil {
 				t.Errorf("%s: %s %v", dbType, td.description, createError)
-				break
+				continue
 			}
 
 			if id == 0 {
 				t.Error("expected the returned ID to be non-zero")
-				break
+				continue
 			}
 			if td.input.ID != id {
 				t.Error("expected the ID in the supplied object to be updated")
-				break
+				continue
 			}
 
 			got, fetchError := db.GetMembershipSale(id)
 			if fetchError != nil {
 				t.Errorf("%s %s - %v", dbType, td.description, fetchError)
-				break
+				continue
 			}
 
 			// The id has been set in the stored record.  Set the ID in
@@ -1889,7 +2461,7 @@ func TestMembershipSale(t *testing.T) {
 
 			td.want.ID = got.ID
 
-			if td.want != *got {
+			if !reflect.DeepEqual(td.want, *got) {
 				t.Errorf("%s %s\nwant %v\ngot  %v", dbType, td.description, td.want, *got)
 				break
 			}
@@ -1902,6 +2474,7 @@ func TestMembershipSale(t *testing.T) {
 			got.PaymentID = wantPaymentID
 			got.PaymentStatus = wantPaymentStatus
 
+			// If the user ID is set then we can update
 			updateError := got.Update(db)
 			if updateError != nil {
 				t.Errorf("%s %s: %v", dbType, td.description, updateError)
@@ -1914,12 +2487,12 @@ func TestMembershipSale(t *testing.T) {
 				break
 			}
 
-			if td.want != *updatedMS {
+			if !reflect.DeepEqual(td.want, *updatedMS) {
 				t.Errorf("%s %s\nwant %v\ngot  %v", dbType, td.description, td.want, *updatedMS)
 				break
 			}
 
-			// Tidy up - delete the membershipsales record and check that it's deleted.
+			// Tidy up - delete the membership_sales record and check that it's deleted.
 
 			savedID := got.ID
 
@@ -1950,7 +2523,9 @@ func TestMembershipSale(t *testing.T) {
 	}
 }
 
-func F(t *testing.T) {
+// TestMembershipSaleUpdateFailsWithUnknownID checks that a membeship sale
+// update fails when the ID does not match anything in the database.
+func TestMembershipSaleUpdateFailsWithUnknownID(t *testing.T) {
 
 	for _, dbType := range databaseList {
 		db, connError := OpenDBForTesting(dbType)
@@ -1974,7 +2549,7 @@ func F(t *testing.T) {
 			continue
 		}
 
-		user, _, _, _, ue := createTestUserEtc(db)
+		user, _, _, _, _, ue := createTestUserEtc(db)
 		if ue != nil {
 			t.Errorf("%s: %v", dbType, ue)
 			continue
@@ -1993,11 +2568,12 @@ func F(t *testing.T) {
 		id, createError := sale.Create(db)
 		if createError != nil {
 			t.Errorf("%s - %v", dbType, createError)
-			return
+			continue
 		}
 
 		if id == 0 {
 			t.Error("expected the returned ID to be non-zero")
+			continue
 		}
 
 		// Set the Id to a non-existent record.
@@ -2010,14 +2586,8 @@ func F(t *testing.T) {
 			t.Error("expected an error")
 		}
 
-		// Tidy up.
-
-		sale.ID = id
-		deleteError := sale.Delete(db)
-		if deleteError != nil {
-			t.Error(deleteError)
-			return
-		}
+		// The defers earlier ensure that the transaction is now rolled back
+		// and the connection closed.
 	}
 }
 
@@ -2093,7 +2663,7 @@ func TestSetTimeFieldInUserData(t *testing.T) {
 			continue
 		}
 
-		user, _, _, _, ue := createTestUserEtc(db)
+		user, _, _, _, _, ue := createTestUserEtc(db)
 		if ue != nil {
 			t.Errorf("%s: %v", dbType, ue)
 		}
@@ -2307,34 +2877,55 @@ func TestGetUserName(t *testing.T) {
 	}
 }
 
+// CreateUser creates a user for testing.
+func CreateUser(db *Database) (*User, error) {
+	//  Create a user.
+	loginName, e1 := CreateUuid(db.Transaction, "usr_login_name", "adm_users")
+	if e1 != nil {
+		return nil, e1
+	}
+	user := NewUser(loginName)
+	e2 := db.CreateUser(user)
+	if e2 != nil {
+		return nil, e2
+	}
+
+	return user, nil
+}
+
 // CreateTestUserEtc is a helper that creates a user with member
 // and adm_user_data records.
-func createTestUserEtc(db *Database) (*User, *Member, string, string, error) {
+func createTestUserEtc(db *Database) (*User, *Member, string, string, string, error) {
 	startTime := time.Date(1970, time.January, 1, 0, 0, 0, 0, time.UTC)
 	endTime := time.Date(2025, time.December, 31, 0, 0, 0, 0, time.UTC)
 
 	roleMember, re := db.GetRole(RoleNameMember)
 	if re != nil {
-		return nil, nil, "", "", re
+		return nil, nil, "", "", "", re
 	}
 	// Use different names each time to avoid clashes in the postgres
 	// database.
 
 	email, e1 := CreateUuid(db.Transaction, "usr_login_name", "adm_users")
 	if e1 != nil {
-		return nil, nil, "", "", e1
+		return nil, nil, "", "", "", e1
 	}
 
-	firstName, e2 := CreateUuid(db.Transaction, "usd_value", "adm_user_data")
+	title, e2 := CreateUuid(db.Transaction, "usd_value", "adm_user_data")
 	if e2 != nil {
-		return nil, nil, "", "", e2
+		return nil, nil, "", "", "", e2
 	}
 
-	lastName, e3 := CreateUuid(db.Transaction, "usd_value", "adm_user_data")
+	firstName, e3 := CreateUuid(db.Transaction, "usd_value", "adm_user_data")
 	if e3 != nil {
-		return nil, nil, "", "", e3
+		return nil, nil, "", "", "", e3
 	}
-	user, member, umError := db.CreateUserAndMember(email, firstName, lastName, roleMember, startTime, endTime)
 
-	return user, member, firstName, lastName, umError
+	lastName, e4 := CreateUuid(db.Transaction, "usd_value", "adm_user_data")
+	if e4 != nil {
+		return nil, nil, "", "", "", e4
+	}
+	user, member, umError := db.CreateUserAndMember(email, title, firstName, lastName, roleMember, startTime, endTime)
+
+	return user, member, title, firstName, lastName, umError
 }
