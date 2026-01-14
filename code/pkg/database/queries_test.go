@@ -1308,35 +1308,8 @@ func TestCreateAccounts(t *testing.T) {
 					t.Errorf("%s: want valid", td.description)
 				}
 			}
-
-			fieldID, fieldError := db.GetUserDataFieldIDByNameIntern("DATE_LAST_PAID")
-			if fieldError != nil {
-				t.Error(fieldError)
-			}
-
-			sql := `
-			SELECT usd_value
-			FROM adm_user_data
-			WHERE usd_usr_id = $1
-			AND usd_usf_id = $2;
-		`
-			var dateLastPaid string
-
-			fetchDateError := db.QueryRow(sql, user1.ID, fieldID).Scan(&dateLastPaid)
-			if fetchDateError != nil {
-				t.Error(fetchDateError)
-			}
-
-			//
-			if td.wantStartDateSQLite != dateLastPaid {
-				t.Errorf("%s: want %s got %s",
-					td.description, td.wantStartDateSQLite, dateLastPaid)
-			}
-
-			// Done.
 		}
 
-		// The deferred rollback will run.
 	}
 }
 

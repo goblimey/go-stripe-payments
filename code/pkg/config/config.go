@@ -2,7 +2,6 @@ package config
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,13 +10,17 @@ import (
 
 // Config holds the configuration.
 type Config struct {
-	// Tehese config values are taken from the given config file.
-	OrganisationName         string  `json:"organisation_name"`           // The name of the organisation for display                      // true if the server should run as HTTP not HTTPS (usually for testing).
+	// These config values are taken from the given config file.
 	RunUser                  string  `json:"run_user"`                    // The name of the non-root user that will run the server.
-	LogfileGroup             string  `json:"logfile_group"`               // The group that the log file will be in.
-	LogfilePermissions       string  `json:"logfile_permissions"`         // The permission bits for the logfile, an int in octal as a string.
+	LogDir                   string  `json:"log_dir"`                     // The directory in which the daily log is created.
+	LogFileGroup             string  `json:"logfile_group"`               // The group that the log file will be in.
+	LogDirPermissions        string  `json:"logdir_permissions"`          // The permissions on the directory containing the log files, an int in octal as a string, eg "0700".
+	LogFilePermissions       string  `json:"logfile_permissions"`         // The permission bits for the logfile, an int in octal as a string, eg "0600".
+	LogLeader                string  `json:"log_leader"`                  // The first part of the log file name.
+	LogTrailer               string  `json:"log_trailer"`                 // The last part of the log file name.
 	TLSCertificateFile       string  `json:"tls_certificate_file"`        // The TLS certificate file.
 	TLSCertificateKeyFile    string  `json:"tls_certificate_key_file"`    // the secret TLS key file.
+	OrganisationName         string  `json:"organisation_name"`           // The name of the organisation for display
 	EnableOtherMemberTypes   bool    `json:"enable_other_member_types"`   // Enable associate members, friends etc.
 	EnableGiftaid            bool    `json:"enable_giftaid"`              // Enable Giftaid.
 	EmailAddressForQuestions string  `json:"email_address_for_questions"` // Email address for questions.
@@ -25,8 +28,6 @@ type Config struct {
 	OrdinaryMemberFee        float64 `json:"ordinary_member_fee"`         // Ordinary membership fee.
 	AssocMemberFee           float64 `json:"associate_member_fee"`        // Associate membership system.
 	FriendFee                float64 `json:"friend_fee"`                  // Friend of the museum fee.
-	LogDir                   string  `json:"log_dir"`                     // The directory in which the daily log is created.
-	LogLeader                string  `json:"log_leader"`                  // The first part of the log file name.
 
 	// Secrets are taken from the environment.
 	StripeSecretKey string
@@ -39,9 +40,28 @@ type Config struct {
 	DBUser          string
 	DBPassword      string
 	Address         string
+}
 
-	// PermissionBits is derived from the string LogfilePermissions.
-	PermissionBits os.FileMode
+// LogDirFileMode gets the log directory permissions as a FileMode object.
+// It follows the Go number conventions, for example "0777" is an octal number.
+// An empty string produces 0 which means "leave the permissions as they are".
+func (conf *Config) LogDirMode() (os.FileMode, error) {
+	if conf.LogDirPermissions == "" {
+		return os.FileMode(0), nil
+	}
+	mode, err := strconv.ParseInt(conf.LogDirPermissions, 8, 32)
+	return os.FileMode(mode), err
+}
+
+// LogDirFileMode gets the log file permissions as a FileMode object.
+// It follows the Go number conventions, for example "0666" is an octal number.
+// An empty string produces 0 which means "leave the permissions as they are".
+func (conf *Config) LogFileMode() (os.FileMode, error) {
+	if conf.LogFilePermissions == "" {
+		return os.FileMode(0), nil
+	}
+	mode, err := strconv.ParseInt(conf.LogFilePermissions, 8, 32)
+	return os.FileMode(mode), err
 }
 
 // GetConfig gets the config from the given file.
@@ -89,26 +109,6 @@ func parseConfigFromBytes(data []byte) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	// The permission bits are supplied as a string containing an int in LogfilePermissions.
-	// If the first character is 0, the value is an octal number, eg "0744".  Convert this
-	// to an os.FileMode (which is a renamed uint32).
-	v, pe := strconv.ParseInt(config.LogfilePermissions, 0, 32)
-	if pe != nil {
-		return nil, pe
-	}
-
-	// value cannot be negative.
-	if v < 0 {
-		return nil, errors.New("log file permissions cannot be negative")
-	}
-
-	if v > 0777 {
-		em := fmt.Sprintf("log file permissions too big - %O", v)
-		return nil, errors.New(em)
-	}
-
-	config.PermissionBits = os.FileMode(v)
 
 	// Get the secrets from the environment.
 

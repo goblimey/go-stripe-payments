@@ -15,7 +15,7 @@ import (
 	"github.com/stripe/stripe-go/v81"
 	"github.com/stripe/stripe-go/v81/checkout/session"
 
-	"github.com/goblimey/syscall"
+	ps "github.com/goblimey/portablesyscall"
 
 	"github.com/goblimey/go-stripe-payments/code/pkg/config"
 	"github.com/goblimey/go-stripe-payments/code/pkg/database"
@@ -27,7 +27,7 @@ import (
 var protocol = "https"
 
 func init() {
-	if syscall.OSNAME == "windows" {
+	if ps.OSName == "windows" {
 		protocol = "http"
 	}
 }
@@ -579,7 +579,7 @@ func (h *Handler) successHelper(w http.ResponseWriter, stripeSession *stripe.Che
 
 	const fn = "successHelper"
 
-	ms, msError := h.getMembershipSaleOnSuccess(w, stripeSession, startDate, endDate, now, paymentYear)
+	ms, msError := h.getMembershipSaleOnSuccess(stripeSession, startDate, endDate, now, paymentYear)
 	if msError != nil {
 		h.reportError(w, h.PostPaymentErrorHTML, msError)
 		h.DB.Rollback()
@@ -595,7 +595,7 @@ func (h *Handler) successHelper(w http.ResponseWriter, stripeSession *stripe.Che
 			fn, ms.ID, ms.Title, ms.FirstName, ms.LastName)
 	}
 
-	cmError := h.setMemberDetails(w, ms, startDate, endDate, now, paymentYear)
+	cmError := h.setMemberDetails(ms, startDate, endDate, now, paymentYear)
 	if cmError != nil {
 		h.reportError(w, h.PostPaymentErrorHTML, cmError)
 		h.DB.Rollback()
@@ -867,7 +867,7 @@ func (h *Handler) successHelper(w http.ResponseWriter, stripeSession *stripe.Che
 	// Success!
 }
 
-func (h *Handler) getMembershipSaleOnSuccess(w http.ResponseWriter, stripeSession *stripe.CheckoutSession, startDate, endDate, now time.Time, paymentYear int) (*database.MembershipSale, error) {
+func (h *Handler) getMembershipSaleOnSuccess(stripeSession *stripe.CheckoutSession, startDate, endDate, now time.Time, paymentYear int) (*database.MembershipSale, error) {
 	const fn = "getMembershipSaleOnSuccess"
 
 	if stripeSession.PaymentStatus != "paid" {
@@ -886,10 +886,6 @@ func (h *Handler) getMembershipSaleOnSuccess(w http.ResponseWriter, stripeSessio
 	// session is the ID of the sales record.
 	ms, fetchError := h.DB.GetMembershipSale(saleID)
 	if fetchError != nil {
-		// The user has paid but we can't fulfill the sale so this error is bad.  Report
-		// it to the user.
-		h.DB.Rollback()
-		h.reportError(w, h.PostPaymentErrorHTML, fetchError)
 		return nil, fetchError
 	}
 
@@ -908,7 +904,7 @@ func (h *Handler) getMembershipSaleOnSuccess(w http.ResponseWriter, stripeSessio
 
 // setMemberDetails creates the members if necessary and sets the adm_user_data
 // fields (title, first name, last name etc).
-func (h *Handler) setMemberDetails(w http.ResponseWriter, ms *database.MembershipSale, startDate, endDate, now time.Time, paymentYear int) error {
+func (h *Handler) setMemberDetails(ms *database.MembershipSale, startDate, endDate, now time.Time, paymentYear int) error {
 
 	// The sale is complete.
 	ms.PaymentStatus = database.PaymentStatusComplete

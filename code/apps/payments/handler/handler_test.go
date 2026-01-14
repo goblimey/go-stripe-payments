@@ -47,7 +47,7 @@ func (trw *TestResponseWriter) WriteHeader(statusCode int) {
 	trw.Code = statusCode
 }
 
-// NewTestReponeWriter takes the given writer and cteates and returns a
+// NewTestReponeWriter takes the given writer and creates and returns a
 // TestResponseWriter.  If you need to see what is written, use a
 // bytes.Buffer as the writer.
 func NewTestResponseWriter(w io.Writer) *TestResponseWriter {
@@ -283,11 +283,8 @@ func TestSetMemberDetails(t *testing.T) {
 				continue
 			}
 
-			var buf bytes.Buffer
-			w := NewTestResponseWriter(&buf)
-
 			// Test
-			smdError := h.setMemberDetails(w, &ms, startDate, endDate, now, 2025)
+			smdError := h.setMemberDetails(&ms, startDate, endDate, now, 2025)
 			if smdError != nil {
 				t.Error(smdError)
 			}
@@ -1356,6 +1353,14 @@ func TestUsersExistWithAssociate(t *testing.T) {
 			t.Error(aee)
 		}
 
+		// Create a structured logger that writes to the dailyLogWriter.
+		dailyLogWriter := dailylogger.New("..", "test.", ".log")
+		logger := slog.New(slog.NewTextHandler(dailyLogWriter, nil))
+		db.Logger = logger
+
+		// Create a handler.
+		h := Handler{DB: db, Logger: logger, Conf: &testConfig}
+
 		sale := database.MembershipSale{
 			OrdinaryMemberFeePaid: 1.2, AssocFeePaid: 3.4, FriendFeePaid: 5.6, MembershipYear: 2024,
 			FirstName: oFN, LastName: oLN, Email: oEmail,
@@ -1363,27 +1368,45 @@ func TestUsersExistWithAssociate(t *testing.T) {
 			UserID: 0, AssocUserID: 0,
 		}
 
-		// Create an ordinary user and an associate.
-		oID, aID, createError := db.CreateAccounts(&sale, time.Now(), time.Now())
-		if createError != nil {
-			t.Error(createError)
+		startDate := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+		endDate := time.Date(2026, time.December, 31, 23, 59, 59, 999999999, time.UTC)
+		now := time.Date(2026, time.February, 14, 12, 0, 0, 0, time.UTC)
+		paymentYear := 2026
+
+		// Test.
+
+		// Create the users.
+		cmError := h.setMemberDetails(&sale, startDate, endDate, now, paymentYear)
+		if cmError != nil {
+			t.Error(cmError)
 			return
 		}
 
-		// Test.
+		// Add the extra details.
+		h.setAccountingRecordsForMembers(&sale, now)
+
+		ou, oue := h.DB.GetUserByLoginName(sale.Email)
+		if oue != nil {
+			t.Errorf("%s: %v", dbType, oue)
+		}
+
+		au, aue := h.DB.GetUserByLoginName(sale.AssocEmail)
+		if aue != nil {
+			t.Errorf("%s: %v", dbType, aue)
+		}
+
+		// The test - usersExist() should give back the userIDs of the two users.
 		fetchedOID, fetchedAID, lookupError := usersExist(&sale, db)
 		if lookupError != nil {
 			t.Error(lookupError)
 			return
 		}
 
-		// Check - usersExist() should give back the userIDs of the two users.
-
-		if fetchedOID != oID {
-			t.Errorf("want ID %d got %d", oID, fetchedOID)
+		if fetchedOID != ou.ID {
+			t.Errorf("want ID %d got %d", ou.ID, fetchedOID)
 		}
-		if fetchedAID != aID {
-			t.Errorf("want ID %d got %d", aID, fetchedAID)
+		if fetchedAID != au.ID {
+			t.Errorf("want ID %d got %d", au.ID, fetchedAID)
 
 		}
 
@@ -1446,33 +1469,61 @@ func TestUsersExistWhenAssociateHasNoEmailAddress(t *testing.T) {
 			UserID: 0, AssocUserID: 0,
 		}
 
-		// Create an ordinary user and an associate.  Thevassociate has no email address
+		// Create a structured logger that writes to the dailyLogWriter.
+		dailyLogWriter := dailylogger.New("..", "test.", ".log")
+		logger := slog.New(slog.NewTextHandler(dailyLogWriter, nil))
+		db.Logger = logger
+
+		// Create a handler.
+		h := Handler{DB: db, Logger: logger, Conf: &testConfig}
+
+		startDate := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+		endDate := time.Date(2026, time.December, 31, 23, 59, 59, 999999999, time.UTC)
+		now := time.Date(2026, time.February, 14, 12, 0, 0, 0, time.UTC)
+		paymentYear := 2026
+
+		// Create an ordinary user and an associate.  The associate has no email address
 		// so the account name will be "firstname.lastname" and there will be first name
 		// and last name fields in adm_user_data.
-		oID, aID, createError := db.CreateAccounts(&sale, time.Now(), time.Now())
-		if createError != nil {
-			t.Error(createError)
+		cmError := h.setMemberDetails(&sale, startDate, endDate, now, paymentYear)
+		if cmError != nil {
+			t.Error(cmError)
 			return
 		}
 
-		// The test - the associate user has no email address but usersExist() can still
-		// find it using the first name and the last name.
+		// Add the extra details.
+		h.setAccountingRecordsForMembers(&sale, now)
+
+		// The test - usersExist() should give back the userIDs of the two users.
 		fetchedOID, fetchedAID, lookupError := usersExist(&sale, db)
 		if lookupError != nil {
 			t.Error(lookupError)
 			return
 		}
 
-		if fetchedOID != oID {
-			t.Errorf("want ID %d got %d", oID, fetchedOID)
+		// Check.
+		ou, oue := h.DB.GetUserByLoginName(sale.Email)
+		if oue != nil {
+			t.Errorf("%s: %v", dbType, oue)
+		}
+
+		// Get the associate - they don't have an email address so the user name is
+		// "firstname.lastname".
+		au, aue := h.DB.GetUserByLoginName(sale.AssocFirstName + "." + sale.AssocLastName)
+		if aue != nil {
+			t.Errorf("%s: %v", dbType, aue)
+		}
+
+		if fetchedOID != ou.ID {
+			t.Errorf("want ID %d got %d", ou.ID, fetchedOID)
 			return
 		}
-		if fetchedAID != aID {
-			t.Errorf("want ID %d got %d", aID, fetchedAID)
+		if fetchedAID != au.ID {
+			t.Errorf("want ID %d got %d", au.ID, fetchedAID)
 			return
 		}
 
-		assoc, fetchAssocError := db.GetUser(aID)
+		assoc, fetchAssocError := db.GetUser(au.ID)
 		if fetchAssocError != nil {
 			t.Error(fetchAssocError)
 			return
@@ -1526,19 +1577,35 @@ func TestUsersExistWithNoAssociate(t *testing.T) {
 			UserID: 0, AssocUserID: 0,
 		}
 
-		// Create users.
-		oID, aID, createError := db.CreateAccounts(&sale, time.Now(), time.Now())
-		if createError != nil {
-			t.Error(createError)
+		// Create a structured logger that writes to the dailyLogWriter.
+		dailyLogWriter := dailylogger.New("..", "test.", ".log")
+		logger := slog.New(slog.NewTextHandler(dailyLogWriter, nil))
+		db.Logger = logger
+
+		// Create a handler.
+		h := Handler{DB: db, Logger: logger, Conf: &testConfig}
+
+		startDate := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+		endDate := time.Date(2026, time.December, 31, 23, 59, 59, 999999999, time.UTC)
+		now := time.Date(2026, time.February, 14, 12, 0, 0, 0, time.UTC)
+		paymentYear := 2026
+
+		// Create the user with no associate..
+		cmError := h.setMemberDetails(&sale, startDate, endDate, now, paymentYear)
+		if cmError != nil {
+			t.Error(cmError)
 			return
 		}
 
-		if aID != 0 {
-			t.Errorf("want ID 0 (no associate) got %d", aID)
-			return
+		// Add the extra details.
+		h.setAccountingRecordsForMembers(&sale, now)
+
+		ou, oue := h.DB.GetUserByLoginName(sale.Email)
+		if oue != nil {
+			t.Errorf("%s: %v", dbType, oue)
 		}
 
-		// The test - usersExist() should give back the userIDs of the ordinary user
+		// Test - usersExist() should give back the userIDs of the ordinary user
 		// but no associate.
 		fetchedOID, fetchedAID, lookupError := usersExist(&sale, db)
 		if lookupError != nil {
@@ -1546,8 +1613,8 @@ func TestUsersExistWithNoAssociate(t *testing.T) {
 			return
 		}
 
-		if fetchedOID != oID {
-			t.Errorf("want ID %d got %d", oID, fetchedOID)
+		if fetchedOID != ou.ID {
+			t.Errorf("want ID %d got %d", ou.ID, fetchedOID)
 			return
 		}
 		if fetchedAID != 0 {
@@ -1628,15 +1695,12 @@ func TestGetMembershipSaleOnSuccess(t *testing.T) {
 			Customer:          &customer,
 		}
 
-		var buf bytes.Buffer
-		w := NewTestResponseWriter(&buf)
-
 		now := time.Date(2024, time.October, 1, 0, 0, 0, 0, h.TZ)
 		endDate := time.Date(2024, time.December, 31, 23, 59, 59, 999999999, h.TZ)
 		startDate := time.Date(2024, time.July, 31, 10, 0, 0, 0, h.TZ)
 
 		fetchedMS, msError := h.getMembershipSaleOnSuccess(
-			w, &session, startDate, endDate, now, 2025)
+			&session, startDate, endDate, now, 2025)
 		if msError != nil {
 			t.Error(msError)
 			continue
@@ -1717,15 +1781,12 @@ func TestSetAccountingRecordsForMembers(t *testing.T) {
 			continue
 		}
 
-		var buf bytes.Buffer
-		w := NewTestResponseWriter(&buf)
-
 		now := time.Date(2024, time.October, 1, 0, 0, 0, 0, h.TZ)
 		const wantDateLastPaid = "2024-02-14"
 		endDate := time.Date(2024, time.December, 31, 23, 59, 59, 999999999, h.TZ)
 		startDate := time.Date(2024, time.July, 31, 10, 0, 0, 0, h.TZ)
 
-		smdError := h.setMemberDetails(w, &ms, startDate, endDate, now, 2025)
+		smdError := h.setMemberDetails(&ms, startDate, endDate, now, 2025)
 		if smdError != nil {
 			t.Error(smdError)
 		}
@@ -2563,7 +2624,6 @@ func TestMakeCountrySelectionListFavouring(t *testing.T) {
 	if got != want {
 		t.Errorf("want %s\ngot  %s\n%s", want, got, diff.Diff(want, got))
 	}
-
 }
 
 func cleanUpHTML(s string) string {

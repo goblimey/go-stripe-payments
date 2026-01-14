@@ -11,24 +11,30 @@ func TestParseConfig(t *testing.T) {
 
 	json := []byte(`
 		{
-			"organisation_name": "some name",
-			"HTTP": true,
+			
 			"run_user": "simon",
+			"log_dir": ".",
 			"logfile_group": "peter",
-			"logfile_permissions": "0777",
-			"stripe_secret_key": "foo",
+			"logdir_permissions": "0777",
+			"logfile_permissions": "0666",
+    		"log_leader": "lead.",
+			"log_trailer": ".trail",
 			"tls_certificate_file": "pem",
 			"tls_certificate_key_file": "key",
+			"organisation_name": "some name",
 			"enable_other_member_types": true,
 			"enable_giftaid": true,
 			"email_address_for_failures": "foo@example.com",
+			"email_address_for_questions": "bar@example.com",
 			"db_type": "type",
 			"db_host": "this",
 			"db_port": 1234,
 			"db_database": "db",
 			"db_user": "me",
-			"log_dir": ".",
-    		"log_leader": "payments"
+			"stripe_secret_key": "foo",
+			"ordinary_member_fee": 1.1,
+			"associate_member_fee": 2.2,
+			"friend_fee": 3.3
 		}
 	`)
 
@@ -86,12 +92,8 @@ func TestParseConfig(t *testing.T) {
 		t.Errorf("want simon, got %s", conf.RunUser)
 	}
 
-	if conf.LogfileGroup != "peter" {
-		t.Errorf("want peter, got %s", conf.LogfileGroup)
-	}
-
-	if conf.PermissionBits != 0777 {
-		t.Errorf("want 0777 got %O", conf.PermissionBits)
+	if conf.LogFileGroup != "peter" {
+		t.Errorf("want peter, got %s", conf.LogFileGroup)
 	}
 
 	if conf.StripeSecretKey != "foo" {
@@ -118,12 +120,48 @@ func TestParseConfig(t *testing.T) {
 		t.Errorf("want foo@example.com, got %s", conf.EmailAddressForFailures)
 	}
 
+	if conf.EmailAddressForQuestions != "bar@example.com" {
+		t.Errorf("want bar@example.com, got %s", conf.EmailAddressForQuestions)
+	}
+
 	if conf.LogDir != "." {
 		t.Errorf("want \".\" got %s", conf.LogDir)
 	}
 
-	if conf.LogLeader != "payments" {
-		t.Errorf("want \"payments\" got %s", conf.LogLeader)
+	if conf.LogLeader != "lead." {
+		t.Errorf("want \"lead.\" got %s", conf.LogLeader)
+	}
+
+	if conf.LogTrailer != ".trail" {
+		t.Errorf("want \".trail\" got %s", conf.LogLeader)
+	}
+
+	md, ed := conf.LogDirMode()
+	if ed != nil {
+		t.Error(ed)
+	}
+	if md != 0777 {
+		t.Errorf("want 0777 got 0%o", md)
+	}
+
+	mf, ef := conf.LogFileMode()
+	if ef != nil {
+		t.Error(ef)
+	}
+	if mf != 0666 {
+		t.Errorf("want 0666 got 0%o", mf)
+	}
+
+	if conf.OrdinaryMemberFee != 1.1 {
+		t.Errorf("want 1.1, got %f", conf.OrdinaryMemberFee)
+	}
+
+	if conf.AssocMemberFee != 2.2 {
+		t.Errorf("want 2.2, got %f", conf.AssocMemberFee)
+	}
+
+	if conf.FriendFee != 3.3 {
+		t.Errorf("want 3.3, got %f", conf.FriendFee)
 	}
 }
 
@@ -152,7 +190,14 @@ func TestGetConfig(t *testing.T) {
 	// Ensure that the test files are tidied away at the end.
 	defer testsupport.RemoveWorkingDirectory(testDirName)
 
-	configFile := "config.json"
+	const configFile = "config.json"
+	const configContents = `
+		{
+			"organisation_name": "some org",
+			"tls_certificate_file": "pem",
+			"tls_certificate_key_file": "key"
+		}
+	`
 
 	writer, fileCreateError := os.Create(configFile)
 	if fileCreateError != nil {
@@ -160,20 +205,15 @@ func TestGetConfig(t *testing.T) {
 		return
 	}
 
-	const configStr = `
-		{
-			"organisation_name": "some org",
-			"tls_certificate_file": "pem",
-			"tls_certificate_key_file": "key"
-			
-		}
-	`
-	json := []byte(configStr)
+	json := []byte(configContents)
 	_, writeError := writer.Write([]byte(json))
 	if writeError != nil {
 		t.Error(writeError)
 		return
 	}
+
+	jsonS := string(json)
+	_ = jsonS
 
 	config, errConfig := GetConfig("./config.json")
 	if errConfig != nil {

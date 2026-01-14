@@ -32,6 +32,7 @@ package main
 
 import (
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -43,7 +44,7 @@ import (
 
 	"github.com/stripe/stripe-go/v81"
 
-	"github.com/goblimey/go-tools/dailylogger"
+	"github.com/goblimey/dailylogger"
 	ps "github.com/goblimey/portablesyscall"
 
 	"github.com/goblimey/go-stripe-payments/code/apps/payments/handler"
@@ -81,7 +82,7 @@ func main() {
 
 	// Create the daily log file.  In production we are running as root.  We don't
 	// want to have be root to read the log, so set it owned as the target user.
-	hdlr.Logger = GetDailyLogger(conf.LogDir, conf.LogLeader)
+	hdlr.Logger = GetDailyLogger(conf)
 
 	http.HandleFunc("/", hdlr.Home)
 	http.HandleFunc("/index.html", hdlr.Home)
@@ -141,7 +142,7 @@ func main() {
 		// restarted after a couple of seconds and pick up the current certificate.
 
 		if len(conf.RunUser) <= 0 {
-			hdlr.Fatal(errors.New("https specified but no run user")
+			hdlr.Fatal(errors.New("https specified but no run user"))
 		}
 
 		if len(conf.TLSCertificateFile) == 0 || len(conf.TLSCertificateKeyFile) == 0 {
@@ -179,15 +180,19 @@ func main() {
 
 		// In production the program should start off running as root, so that it can read
 		// the TLS cerificate, but from now on it can run as an ordinary user, specified in
-		// the config.  This only works on the Linux target, not under Windows.
+		// the config.  This is done by calling syscall.Setuid, but that only works on a
+		// POSIX target such as Linux, not under Windows.
 		//
 		// The Windows version of syscall offers a Getuid but no Setuid, so a program that
-		// calls syscall.Setuid won't compile under Windows.  The portablesyscall.Setuid
-		// exists in all systems.  In a POSIX system such as UNIX or Linux it sets the
-		// user and under Windows it returns an error, so a program that uses it can be
-		// compiled and run under Windows but should avoid calling the function.  The upshot
-		// here is that the server can offer an HTTP service under Windows but not HTTPS.
-		// This allows us to do some system testing under windows.
+		// calls syscall.Setuid won't compile if Windows is the target.  The material in the
+		// portablesyscall package exists for all targets.  Running on a POSIX system such as
+		// UNIX or Linux portablesyscall.setuid changes the user running the program from root
+		// to the given user.  If Setuid is called by a program running under Windows, it
+		// returns an error, but the program still compiles and will run.  It just can't
+		// attempt to change the user that's running it.
+		//
+		// The upshot is that this server can offer an HTTP service under Windows but not HTTPS,
+		// which enables some useful system testing in that environment.
 		suError := ps.Setuid(userID)
 		if suError != nil {
 			hdlr.Fatal(suError)
@@ -197,10 +202,10 @@ func main() {
 		// config.  It may fall over later due to a fatal error and, just before midnight, it
 		// will shut itself down.
 		//
-		// The server should be run by some runner device such as a shell script which repeatedly
-		// starts it, waits for it finish, pauses for a few seconds, then starts it again, and
-		// so on.  The server will shut itself down just before midnight and the runner will
-		// start it up again a few seconds into the next morning.
+		// The server should be run by some device such as a shell script which repeatedly
+		// starts it, waits for it finish, pauses for a few seconds, then starts it again.  The
+		// server will shut itself down just before midnight and the runner will start it up
+		// again a few seconds into the next morning.
 		//
 		// Now we create the daily logger.  If we are starting up after a planned midnight
 		// shutdown, it's first thing in the morning so we will create a new log file with a
@@ -209,7 +214,7 @@ func main() {
 		// error we will pick up the log file that was created earlier.
 		//
 
-		message := fmt.Sprintf("Running as an HTTPS server as user %s, uid %d", u.Name, userID)
+		message := fmt.Sprintf("Running as an HTTPS server as user %s", u.Name)
 		hdlr.Logger.Info(message)
 
 		// Set the server to shut down just before midnight.
@@ -244,7 +249,7 @@ func main() {
 			// Add any other options here.
 		}
 
-		hdlr.Logger.Info("starting https server " + conf.Address)
+		hdlr.Logger.Info("starting https server as" + conf.Address)
 		serverStartErr := server.ListenAndServeTLS("", "")
 		hdlr.Fatal(serverStartErr)
 	}
@@ -256,30 +261,54 @@ func main() {
 // GetDailyLogger gets a daily log file which can be written to as a logger
 // (each line decorated with filename, date, time, etc).  The name argument
 // is used to form the log file name.
-func GetDailyLogger(logDir, leader string) *slog.Logger {
-	// Creater a daily log writer.
-	name := leader + "."
-	dailyLogWriter := dailylogger.New(logDir, name, ".log")
+// func GetDailyLogger(logDir, leader string) *slog.Logger {
+// 	// Creater a daily log writer.
+// 	name := leader + "."
+// 	dailyLogWriter := dailylogger.New(logDir, name, ".log")
 
-	// Create a structured logger that writes to the dailyLogWriter.
-	logger := slog.New(slog.NewTextHandler(dailyLogWriter, nil))
+// 	// Create a structured logger that writes to the dailyLogWriter.
+// 	logger := slog.New(slog.NewTextHandler(dailyLogWriter, nil))
 
-	return logger
-}
+// 	return logger
+// }
 
-// GetDailyLoggerForUser gets a daily log file which can be written to as a logger
-// (each line decorated with filename, date, time, etc).  The name argument
+// GetDailyLogger gets a daily log file which can be written to as a SLOG logger
+// The form (name, )
 // is used to form the log file name.  The file will be owned by the configured
-// user, will be in the configured group and will have the configured permissions 
-func (hdlr *Handler) GetDailyLoggerForUser(logDir, leader string) *slog.Logger {
-	// Creater a daily log writer.
-	name := leader + "."
-	dailyLogWriter := dailylogger.New(logDir, name, ".log")
+// user, will be in the configured group and will have the configured permissions
+func GetDailyLogger(conf *config.Config) *slog.Logger {
+	f := "GetDailyLogger"
+	md, mde := conf.LogDirMode()
+	if mde != nil {
+		fmt.Printf("%s: error getting log directory mode - %v\n", f, mde)
+		return nil
+	}
+	mf, mfe := conf.LogFileMode()
+	if mfe != nil {
+		fmt.Printf("%s: error getting log file mode - %v\n", f, mfe)
+		return nil
+	}
+	// Create a daily log writer from the config.
+	dailyLogWriter := dailylogger.New(
+		time.Now(),
+		conf.LogDir,
+		conf.LogLeader,
+		conf.LogTrailer,
+		conf.RunUser,
+		conf.LogFileGroup,
+		md,
+		mf,
+	)
 
 	// Create a structured logger that writes to the dailyLogWriter.
 	logger := slog.New(slog.NewTextHandler(dailyLogWriter, nil))
+	if logger == nil {
+		fmt.Println("failed to create SLOG logger")
+		return nil
+	}
 
-	logger.Info("user %s group %s", hdlr.config.User, hdlr.config.LogfileGroup)
+	// Log the first message
+	logger.Info("started up and logging")
 
 	return logger
 }
