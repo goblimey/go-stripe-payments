@@ -355,15 +355,17 @@ func (h *Handler) checkoutHelper(w http.ResponseWriter, r *http.Request, payment
 	ms.PaymentStatus = database.PaymentStatusPending
 	ms.OrdinaryMemberFeePaid = h.OrdinaryMembershipFee
 
+	h.logMessage("%s: %s %s %s, %s %s %s",
+		fn, ms.Title, ms.FirstName, ms.LastName,
+		ms.AssocTitle, ms.AssocFirstName, ms.AssocLastName)
+
 	if ms.EnableOtherMemberTypes {
 		if ms.Friend {
 			// The ordinary member is a friend so must pay the friend fee.
 			ms.FriendFeePaid = h.FriendMembershipFee
 		}
 		if len(ms.AssocFirstName) > 0 {
-			h.logMessage("%s: membership_sale id %d - %s %s %s, %s %s %s",
-				fn, ms.ID, ms.Title, ms.FirstName, ms.LastName,
-				ms.AssocTitle, ms.AssocFirstName, ms.AssocLastName)
+
 			// There is an associate member - another fee.
 			ms.AssocFeePaid = h.AssociateMembershipFee
 
@@ -372,13 +374,7 @@ func (h *Handler) checkoutHelper(w http.ResponseWriter, r *http.Request, payment
 				ms.AssocFriendFeePaid = h.FriendMembershipFee
 			}
 		}
-
-	} else {
-		h.logMessage("%s: membership_sale id %d - %s %s %s",
-			fn, ms.ID, ms.Title, ms.FirstName, ms.LastName)
 	}
-
-	h.logMessage("%s: %v", fn, ms)
 
 	salesID, createError := ms.Create(h.DB)
 	if createError != nil {
@@ -586,14 +582,9 @@ func (h *Handler) successHelper(w http.ResponseWriter, stripeSession *stripe.Che
 		return
 	}
 
-	if len(ms.AssocFirstName) > 0 {
-		h.logMessage("%s: membership_sale id %d - %s %s %s, %s %s %s",
-			fn, ms.ID, ms.Title, ms.FirstName, ms.LastName,
-			ms.AssocTitle, ms.AssocFirstName, ms.AssocLastName)
-	} else {
-		h.logMessage("%s: membership_sale id %d -%s  %s %s",
-			fn, ms.ID, ms.Title, ms.FirstName, ms.LastName)
-	}
+	h.logMessage("%s: %s %s %s, %s %s %s",
+		fn, ms.Title, ms.FirstName, ms.LastName,
+		ms.AssocTitle, ms.AssocFirstName, ms.AssocLastName)
 
 	cmError := h.setMemberDetails(ms, startDate, endDate, now, paymentYear)
 	if cmError != nil {
@@ -1068,9 +1059,11 @@ func (h *Handler) setMemberDetails(ms *database.MembershipSale, startDate, endDa
 func (h *Handler) setAccountingRecordsForMembers(ms *database.MembershipSale, paymentDate time.Time) {
 	// The members are not very interested in these records.  If we get an error, just log it
 	// and continue processing.
+
+	fn := "setAccountingRecordsForMembers"
 	dlpError := h.DB.SetDateLastPaid(ms.UserID, paymentDate)
 	if dlpError != nil {
-		h.logError("successHelper: user ID %d - %v\n", ms.UserID, dlpError)
+		h.logError("%s: user ID %d - %v\n", fn, ms.UserID, dlpError)
 	}
 
 	// The ID of the user record of the ordinary member is in the sale record.  If
@@ -1096,26 +1089,26 @@ func (h *Handler) setAccountingRecordsForMembers(ms *database.MembershipSale, pa
 	if paymentError != nil {
 		em := fmt.Sprintf("error setting last payment for %d - %v",
 			ms.UserID, paymentError)
-		h.logError("successHelper: user ID %d - %s", ms.UserID, em)
+		h.logError("%s: user ID %d - %s", fn, ms.UserID, em)
 	}
 
 	// Set the members at address and friends at address in the ordinary member's record.
 	setMembersError := h.DB.SetMembersAtAddress(ms.UserID, membersAtAddress)
 	if setMembersError != nil {
-		h.logError("successHelper: user ID %d - %v", ms.UserID, setMembersError)
+		h.logError("%s: user ID %d - %v", fn, ms.UserID, setMembersError)
 	}
 
 	if h.Conf.EnableGiftaid && ms.Giftaid {
 		// Set the giftaid tick box, true or false.
 		giftAidError := h.DB.SetGiftaid(ms.UserID, ms.Giftaid)
 		if giftAidError != nil {
-			h.logError("successHelper: user ID %d - %v\n", ms.UserID, giftAidError)
+			h.logError("%s: user ID %d - %v\n", fn, ms.UserID, giftAidError)
 		}
 	}
 
 	setFriendsError := h.DB.SetFriendsAtAddress(ms.UserID, friendsAtAddress)
 	if setFriendsError != nil {
-		h.logError("successHelper: user ID %d - %v", ms.UserID, setFriendsError)
+		h.logError("%s: user ID %d - %v", fn, ms.UserID, setFriendsError)
 	}
 
 	// If the member is a friend, tick the box.  The user may have been a friend last
@@ -1124,7 +1117,7 @@ func (h *Handler) setAccountingRecordsForMembers(ms *database.MembershipSale, pa
 	friendError := h.DB.SetFriendField(
 		ms.UserID, ms.Friend)
 	if friendError != nil {
-		h.logError("successHelper: user ID %d - %v\n", ms.UserID, friendError)
+		h.logError("%s: user ID %d - %v\n", fn, ms.UserID, friendError)
 	}
 
 	// Update the user's donation to society.
@@ -1132,7 +1125,7 @@ func (h *Handler) setAccountingRecordsForMembers(ms *database.MembershipSale, pa
 	if dsError != nil {
 		e := fmt.Errorf("error setting donation to society for %d - %v",
 			ms.UserID, dsError)
-		h.logError("successHelper: user ID %d - %v\n", ms.UserID, e)
+		h.logError("%s: user ID %d - %v\n", fn, ms.UserID, e)
 	}
 
 	// Update the user's donation to museum.
@@ -1140,7 +1133,7 @@ func (h *Handler) setAccountingRecordsForMembers(ms *database.MembershipSale, pa
 	if dmError != nil {
 		e := fmt.Errorf("error setting donation to museum for %d - %v",
 			ms.UserID, dmError)
-		h.logError("successHelper: user ID %d - %v\n", ms.UserID, e)
+		h.logError("%s: user ID %d - %v\n", fn, ms.UserID, e)
 	}
 
 	if h.Conf.EnableOtherMemberTypes && ms.AssocUserID > 0 {
@@ -1149,19 +1142,19 @@ func (h *Handler) setAccountingRecordsForMembers(ms *database.MembershipSale, pa
 		setFriendsError := h.DB.SetFriendField(ms.AssocUserID, ms.AssocFriend)
 		if setFriendsError != nil {
 			e := fmt.Errorf("error setting friend value for %d - %v", ms.AssocUserID, friendError)
-			h.logError("successHelper: user ID %d - %v\n", ms.AssocUserID, e)
+			h.logError("%s: user ID %d - %v\n", fn, ms.AssocUserID, e)
 		}
 
 		// Set the members at address in the associate member's record.
 		setMembersError := h.DB.SetMembersAtAddress(ms.AssocUserID, membersAtAddress)
 		if setMembersError != nil {
-			h.logError("successHelper: user ID %d - %v", ms.AssocUserID, setMembersError)
+			h.logError("%s: user ID %d - %v", fn, ms.AssocUserID, setMembersError)
 		}
 
 		// Set the members at address in the associate member's record.
 		safe := h.DB.SetFriendsAtAddress(ms.AssocUserID, friendsAtAddress)
 		if safe != nil {
-			h.logError("successHelper: user ID %d - %v", ms.AssocUserID, setMembersError)
+			h.logError("%s: user ID %d - %v", fn, ms.AssocUserID, setMembersError)
 		}
 	}
 }
@@ -1173,6 +1166,8 @@ func (h *Handler) fetchCurrentExtraDetails(ms *database.MembershipSale) {
 	// An existing member is renewing. Fill the extra details (address etc)with
 	// the values that the user gave last time. On any error, just set the
 	// value to the returned zero value.
+
+	const fn = "fetchCurrentExtraDetails"
 	ms.AddressLine1, _ = h.DB.GetAddressLine1(ms.UserID)
 	ms.AddressLine2, _ = h.DB.GetAddressLine2(ms.UserID)
 	ms.AddressLine3, _ = h.DB.GetAddressLine3(ms.UserID)
@@ -1198,7 +1193,7 @@ func (h *Handler) fetchCurrentExtraDetails(ms *database.MembershipSale) {
 	// to display.
 	interests, ie := h.DB.GetMembersInterests(ms.UserID)
 	if ie != nil {
-		h.logError("successHelper: error fetching interests - %v", ie)
+		h.logError("%s: error fetching interests - %v", fn, ie)
 	} else {
 		if ms.TopicsOfInterest == nil {
 			ms.TopicsOfInterest = make(map[int64]interface{})

@@ -3,9 +3,9 @@ module github.com/goblimey/go-stripe-payments
 go 1.24.1
 
 require (
+	github.com/goblimey/dailylogger v0.0.0-20260115191734-85f39a29ddf0
 	github.com/goblimey/go-tools v0.0.11
 	github.com/goblimey/portablesyscall v0.0.0-20260111231805-0c68a3fd59ea
-	github.com/goblimey/syscall v0.0.0-20251231105736-6d91d77ab3f5
 	github.com/google/uuid v1.6.0
 	github.com/kylelemons/godebug v1.1.0
 	github.com/lib/pq v1.10.9
@@ -15,7 +15,6 @@ require (
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/goblimey/dailylogger v0.0.0-20260112121643-279be96f7922 // indirect
 	github.com/goblimey/switchwriter v0.0.0-20260103122352-d7a30a22828f // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect

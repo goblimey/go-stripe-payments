@@ -141,8 +141,11 @@ func main() {
 		// If the server falls over during the day due to some fatal error, it will be
 		// restarted after a couple of seconds and pick up the current certificate.
 
+		if os.Getuid() != 0 {
+			hdlr.Fatal(errors.New("must be root to run an HTTPS server"))
+		}
 		if len(conf.RunUser) <= 0 {
-			hdlr.Fatal(errors.New("https specified but no run user"))
+			hdlr.Fatal(errors.New("running on a POSIX system but no run user supplied"))
 		}
 
 		if len(conf.TLSCertificateFile) == 0 || len(conf.TLSCertificateKeyFile) == 0 {
@@ -212,10 +215,6 @@ func main() {
 		// datestamped name (such as "payment.2025-02-14.log") in the configured log directory.
 		// If we are restarting because the server fell over earlier in the day due to a fatal
 		// error we will pick up the log file that was created earlier.
-		//
-
-		message := fmt.Sprintf("Running as an HTTPS server as user %s", u.Name)
-		hdlr.Logger.Info(message)
 
 		// Set the server to shut down just before midnight.
 		now := time.Now()
@@ -249,7 +248,9 @@ func main() {
 			// Add any other options here.
 		}
 
-		hdlr.Logger.Info("starting https server as" + conf.Address)
+		message := fmt.Sprintf("starting https server on %s as user %s",
+			conf.Address, conf.RunUser)
+		hdlr.Logger.Info(message)
 		serverStartErr := server.ListenAndServeTLS("", "")
 		hdlr.Fatal(serverStartErr)
 	}
@@ -278,12 +279,13 @@ func main() {
 // user, will be in the configured group and will have the configured permissions
 func GetDailyLogger(conf *config.Config) *slog.Logger {
 	f := "GetDailyLogger"
-	md, mde := conf.LogDirMode()
+
+	logDirPerms, mde := conf.LogDirMode()
 	if mde != nil {
 		fmt.Printf("%s: error getting log directory mode - %v\n", f, mde)
 		return nil
 	}
-	mf, mfe := conf.LogFileMode()
+	logFilePerms, mfe := conf.LogFileMode()
 	if mfe != nil {
 		fmt.Printf("%s: error getting log file mode - %v\n", f, mfe)
 		return nil
@@ -296,8 +298,8 @@ func GetDailyLogger(conf *config.Config) *slog.Logger {
 		conf.LogTrailer,
 		conf.RunUser,
 		conf.LogFileGroup,
-		md,
-		mf,
+		logDirPerms,
+		logFilePerms,
 	)
 
 	// Create a structured logger that writes to the dailyLogWriter.
