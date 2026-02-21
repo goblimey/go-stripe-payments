@@ -3,7 +3,7 @@ module github.com/goblimey/go-stripe-payments
 go 1.24.1
 
 require (
-	github.com/goblimey/dailylogger v0.0.0-20260115191734-85f39a29ddf0
+	github.com/goblimey/dailylogger v0.0.0-20260117165653-f43018dc239b
 	github.com/goblimey/go-tools v0.0.11
 	github.com/goblimey/portablesyscall v0.0.0-20260111231805-0c68a3fd59ea
 	github.com/google/uuid v1.6.0

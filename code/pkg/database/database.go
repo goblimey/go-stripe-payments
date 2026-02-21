@@ -469,11 +469,14 @@ func (db *Database) Connect() error {
 // Close closes the database connection.
 func (db *Database) Close() error {
 
-	closeError := db.Connection.Close()
+	var closeError error
+	if db.Connection != nil {
+		closeError = db.Connection.Close()
 
-	if db.Config.Type == "sqlite" {
-		// Whether the close worked or not, we must remove the DB file.
-		testsupport.RemoveWorkingDirectory(db.SQLiteTempDir)
+		if db.Config.Type == "sqlite" {
+			// Whether the close worked or not, we must remove the DB file.
+			testsupport.RemoveWorkingDirectory(db.SQLiteTempDir)
+		}
 	}
 
 	return closeError
@@ -491,13 +494,23 @@ func (db *Database) BeginTx() error {
 	return err
 }
 
-// Commit commits the stored transaction.
+// Commit commits the stored transaction, if any.
 func (db *Database) Commit() error {
+
+	if db.Transaction == nil {
+		return nil
+	}
+
 	return db.Transaction.Commit()
 }
 
-// Rollback roles back the stored transaction.
+// Rollback rolls back the stored transaction, if any.
 func (db *Database) Rollback() error {
+
+	if db.Transaction == nil {
+		return nil
+	}
+
 	return db.Transaction.Rollback()
 }
 

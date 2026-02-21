@@ -1,5 +1,5 @@
 <label for='countryCodes'>Choose your country</label>
-<select name='countryCode', id='countryCodes'>
+<select name='countryCode', id='countryCodes' size='5'>
     <option value="ABW">Aruba</option>
     <option value="AFG">Afghanistan</option>
     <option value="AGO">Angola</option>

@@ -582,11 +582,11 @@ func (h *Handler) successHelper(w http.ResponseWriter, stripeSession *stripe.Che
 		return
 	}
 
-	h.logMessage("%s: %s %s %s, %s %s %s",
-		fn, ms.Title, ms.FirstName, ms.LastName,
+	h.logMessage("%s: payment successful -%s for %s %s %s, %s %s %s",
+		fn, ms.TransactionType, ms.Title, ms.FirstName, ms.LastName,
 		ms.AssocTitle, ms.AssocFirstName, ms.AssocLastName)
 
-	cmError := h.setMemberDetails(ms, startDate, endDate, now, paymentYear)
+	cmError := h.setMemberDetails(ms, starvitDate, endDate, now, paymentYear)
 	if cmError != nil {
 		h.reportError(w, h.PostPaymentErrorHTML, cmError)
 		h.DB.Rollback()
